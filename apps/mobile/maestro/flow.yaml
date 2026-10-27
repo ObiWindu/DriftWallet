@@ -1,0 +1,63 @@
+appId: com.drift.wallet
+name: drift create -> receive -> send
+launchApp:
+  clearState: true
+  stopApp: true
+tags: [t009, smoke]
+---
+- runFlow:
+    when:
+      visible: "Create new wallet"
+    commands:
+      - tapOn: "Create new wallet"
+- assertVisible: "Set a password"
+- inputText: "correct horse battery staple 123!"
+- tapOn: "Continue"
+- assertVisible: "Write down your recovery phrase"
+- assertVisible: "FLAG_SECURE"
+- tapOn: "I saved it"
+- assertVisible: "Backup quiz"
+- tapOn: "word-3-option-1"
+- assertVisible: "Home"
+# U011 Home: portfolio total, testnet banner, chain tabs, empty state
+- assertVisible: "Portfolio"
+- assertVisible: "Testnet mode*"
+- assertVisible: "Ethereum"
+- tapOn: "tab-solana:mainnet"
+- assertVisible: "Solana"
+# Receive screen (U012)
+- tapOn: "Receive"
+- assertVisible: "Receive"
+- assertVisible: "Copy address"
+- tapOn: "receive-copy"
+- assertVisible: "Copied"
+- tapOn: "Back"
+# Send screen (U012): fee tiers with fiat, biometric hint, invalid address
+- tapOn: "Send"
+- assertVisible: "Send"
+- inputText: "0x0000000000000000000000000000000000000000"
+- assertVisible: "Invalid address"
+- assertVisible: "Slow"
+- assertVisible: "Average"
+- assertVisible: "Fast"
+- tapOn: "Back"
+# Activity screen (U013): status list, spam toggle
+- tapOn: "Activity"
+- assertVisible: "Activity"
+- assertVisible: "Hide spam tokens"
+- tapOn: "activity-spam-toggle"
+- tapOn: "Back"
+# Settings screen (U014): auto-lock presets, biometric, network, export, wipe
+- tapOn: "Settings"
+- assertVisible: "Settings"
+- assertVisible: "Auto-lock"
+- tapOn: "autolock-300000"
+- assertVisible: "Biometric unlock"
+- tapOn: "settings-biometric"
+- assertVisible: "Network"
+- assertVisible: "Testnet"
+- tapOn: "settings-export"
+- assertVisible: "Never share your recovery phrase*"
+- inputText: "WIPE"
+- assertVisible: "Type WIPE to confirm"
+- clearState: false

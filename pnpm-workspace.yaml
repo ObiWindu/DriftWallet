@@ -1,0 +1,7 @@
+packages:
+  - "packages/*"
+  - "packages/signer/*"
+  - "apps/*"
+  - "services/*"
+  - "tooling/*"
+  - "tests/e2e"

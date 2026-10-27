@@ -1,0 +1,50 @@
+// Copyright 2026 DriftWallet Contributors.
+// SPDX-License-Identifier: Apache-2.0
+
+# Fastfile stub (U054 release train). Real signing creds plug in via env —
+# NEVER commit keystores, .p8, or store API JSON (see .gitignore).
+#
+# Android signing: set ANDROID_KEYSTORE_PATH / ANDROID_KEYSTORE_PASSWORD /
+#   ANDROID_KEY_ALIAS / ANDROID_KEY_PASSWORD env in CI (base64 keystore decoded
+#   at lane start). iOS signing: `match` or `cert`/`sigh` with MATCH_GIT_URL +
+#   MATCH_PASSWORD; App Store Connect API key via APP_STORE_CONNECT_API_KEY_JSON.
+#
+# Staged rollout: beta lane promotes internal -> 1% -> 10% -> 100% with manual
+# gates between stages (see RELEASE.md §6). Rollback: `fastlane rollback`
+# halts the staged track first, then cut a patch changeset.
+
+default_platform(:android)
+
+platform :android do
+  desc "Internal + staged production rollout: 1% -> 10% -> 100%"
+  lane :beta do |options|
+    stage = options[:stage] || "1pct"
+    # gradle(task: "bundle", build_type: "Release")  # enable with real shell
+    # supply(track: "internal", aab: "...")          # plug Play JSON key via env
+    UI.message("android beta stage=#{stage}: promote internal -> #{stage} (wire supply when creds exist)")
+    # Hermes bytecode size note (U052): record `bundleRelease` .hbc bytes in RELEASE.md rollout log.
+  end
+
+  desc "Halt staged rollout (run before cutting a fix)"
+  lane :rollback do
+    # supply(track: "production", rollout: "1", ...)  # halt = set halt flag
+    UI.message("android rollback: halt staged track, then cut a patch changeset")
+  end
+end
+
+platform :ios do
+  desc "TestFlight + staged App Store rollout: 1% -> 10% -> 100%"
+  lane :beta do |options|
+    stage = options[:stage] || "1pct"
+    # match(type: "appstore")                        # plug MATCH_GIT_URL when ready
+    # gym(scheme: "DriftWallet")                     # enable with real shell
+    # pilot(distribute_external: false)              # TestFlight first
+    UI.message("ios beta stage=#{stage}: TestFlight -> phased release #{stage} (wire pilot/deliver when creds exist)")
+  end
+
+  desc "Halt phased release"
+  lane :rollback do
+    # deliver(proceed_without_submit: true, phased_release_status: "PAUSED")
+    UI.message("ios rollback: pause phased release, then cut a patch changeset")
+  end
+end

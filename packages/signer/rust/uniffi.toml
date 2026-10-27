@@ -1,0 +1,18 @@
+# UniFFI bindings for the Drift signer core.
+#
+# The Rust crate `drift-signer` exposes a JSON-string C ABI (see
+# `src/ffi.rs`: `drift_*` / `drift_free` / `drift_capabilities`).
+# UniFFI scaffolding + the Android/iOS TurboModule stubs in
+# `packages/signer/android/` and `packages/signer/ios/` call that ABI;
+# no new Rust crates are introduced for the bindings themselves.
+
+namespace = "drift_signer"
+
+[bindings.kotlin]
+package_name = "com.drift.signer"
+
+[bindings.swift]
+module_name = "DriftSigner"
+
+[bindings.python]
+exclude = true

@@ -1,0 +1,1 @@
+PENDING-WASM 53ebb01e51514bf710c23ff070f38097c32671657eb6d42a522d163255f06285  packages/signer/rust/Cargo.lock (run wasm-pack, then re-record)

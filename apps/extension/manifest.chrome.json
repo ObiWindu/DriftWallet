@@ -1,0 +1,9 @@
+{
+  "manifest_version": 3,
+  "name": "DriftWallet",
+  "version": "0.1.0",
+  "permissions": ["storage", "alarms", "offscreen", "activeTab"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_popup": "popup.html" },
+  "content_security_policy": { "extension_pages": "script-src 'self'; object-src 'none'; connect-src https://gateway.drift.example" }
+}

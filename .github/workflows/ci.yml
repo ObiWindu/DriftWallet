@@ -1,0 +1,115 @@
+name: ci
+on: [push, pull_request, workflow_dispatch]
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo test --manifest-path packages/signer/rust/Cargo.toml
+      - run: cargo clippy --manifest-path packages/signer/rust/Cargo.toml -- -D warnings
+      - name: Install cargo-audit + cargo-deny
+        run: cargo install --locked cargo-audit cargo-deny
+      - run: cargo audit --manifest-path packages/signer/rust/Cargo.toml
+      - run: cargo deny --manifest-path packages/signer/rust/Cargo.toml check
+  ts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -w typecheck
+      - run: pnpm -w test
+      - run: pnpm --filter ./apps/extension review
+      - run: pnpm run sbom && test -f sbom.json
+      - run: pnpm run repro
+      - name: Install semgrep + gitleaks
+        run: |
+          pip install semgrep
+          curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz \
+            | tar -xz -C /tmp gitleaks && sudo mv /tmp/gitleaks /usr/local/bin/
+      - run: semgrep --config .semgrep --error
+      - run: gitleaks detect --no-git --verbose
+  ext-package:
+    runs-on: ubuntu-latest
+    needs: [ts]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run ext:package
+      - run: cat apps/extension/SHA256SUMS && test -f apps/extension/drift-wallet-chrome.zip && test -f apps/extension/drift-wallet-firefox.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: extension-zips
+          path: |
+            apps/extension/drift-wallet-chrome.zip
+            apps/extension/drift-wallet-firefox.zip
+            apps/extension/SHA256SUMS
+      - name: web-ext lint (Firefox, dry-run)
+        run: pnpm dlx web-ext@8 lint -s apps/extension/dist-firefox --self-hosted
+  wasm:
+    # Manual-dispatch only: wasm-pack + full build is too heavy for every PR.
+    # Run via Actions "Run workflow" before a release. The job builds the
+    # real artifact, re-records wasm.SHA256, and uploads both for the release;
+    # the maintainer commits the updated wasm.SHA256 alongside the release tag.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/wasm-pack
+          key: wasm-pack-locked-${{ runner.os }}
+      - run: cargo install wasm-pack --locked
+      - name: Build signer WASM
+        run: cd packages/signer/rust && wasm-pack build --target web --out-dir ../ts/wasm-pkg --out-name drift_signer
+      - run: node scripts/repro.mjs record && node scripts/repro.mjs verify
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-pkg
+          path: |
+            packages/signer/ts/wasm-pkg/
+            packages/signer/ts/wasm.SHA256
+  perf-budget:
+    runs-on: ubuntu-latest
+    needs: [ext-package]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run ext:build
+      - run: pnpm run size:check
+  a11y:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      # Enforcing gate: measured WCAG contrast pairs (fails below 4.5:1).
+      - run: pnpm --filter ./packages/ui exec vitest run src/contrast.test.ts
+      # Informational: static token scan (warns when tokens file is absent).
+      - run: node scripts/contrast-check.mjs
+  consistency:
+    # Release-consistency gate: versions locked across shells + committed
+    # OpenAPI snapshot matches the served route (regen must be a no-op).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: node scripts/check-versions.mjs
+      - run: pnpm --dir services/gateway exec tsx ../../scripts/dump-openapi.mts
+      - run: git diff --exit-code -- services/gateway/openapi.json

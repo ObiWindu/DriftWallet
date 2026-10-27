@@ -1,0 +1,28 @@
+{
+  "name": "@drift/extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build && vite build --config vite.sw.config.ts && vite build --config vite.cs.config.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "dev:chrome": "vite --mode chrome",
+    "dev:firefox": "vite --mode firefox",
+    "review": "node scripts/review.mjs"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.8",
+    "vitest": "^2.1.8"
+  },
+  "dependencies": {
+    "i18next": "^26.5.11",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "zod": "^3.23.8"
+  },
+  "license": "Apache-2.0"
+}

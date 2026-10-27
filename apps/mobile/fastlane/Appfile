@@ -1,0 +1,15 @@
+# Appfile stub (U054). Identifiers only — no teams, no keys, no secrets.
+# Fill in real values in CI env / local untracked fastlane/.env (gitignored via .env*).
+
+# for_platform :ios do
+#   app_identifier("com.drift.wallet")
+#   apple_id("releases@drift.example")
+#   itc_team_id("TEAMID")
+#   team_id("TEAMID")
+# end
+#
+# for_platform :android do
+#   package_name("com.drift.wallet")
+# end
+
+json_key_file("") # CI sets PLAY_JSON_KEY_PATH env instead; leave empty locally

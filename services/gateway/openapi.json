@@ -1,0 +1,84 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "drift-gateway",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/healthz": {
+      "get": {
+        "summary": "health"
+      }
+    },
+    "/v1/prices": {
+      "get": {
+        "summary": "prices"
+      }
+    },
+    "/v1/evm/{chainId}/broadcast": {
+      "post": {
+        "summary": "broadcast evm"
+      }
+    },
+    "/v1/sol/broadcast": {
+      "post": {
+        "summary": "broadcast sol"
+      }
+    },
+    "/v1/btc/broadcast": {
+      "post": {
+        "summary": "broadcast btc"
+      }
+    },
+    "/v1/ada/broadcast": {
+      "post": {
+        "summary": "broadcast ada"
+      }
+    },
+    "/v1/phishlist": {
+      "get": {
+        "summary": "phishlist"
+      }
+    },
+    "/v1/push/subscribe": {
+      "post": {
+        "summary": "push subscribe"
+      }
+    },
+    "/v1/evm/{chainId}/balance/{addr}": {
+      "get": {
+        "summary": "evm balance"
+      }
+    },
+    "/v1/sol/balance/{addr}": {
+      "get": {
+        "summary": "sol balance"
+      }
+    },
+    "/v1/btc/utxo/{addr}": {
+      "get": {
+        "summary": "btc utxos"
+      }
+    },
+    "/v1/ada/utxo/{addr}": {
+      "get": {
+        "summary": "ada utxos"
+      }
+    },
+    "/v1/tokens/{chain}": {
+      "get": {
+        "summary": "tokens"
+      }
+    },
+    "/v1/evm/simulate": {
+      "post": {
+        "summary": "simulate evm"
+      }
+    },
+    "/v1/sol/simulate": {
+      "post": {
+        "summary": "simulate sol"
+      }
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "common.continue": "Continuer",
+  "common.back": "Retour",
+  "common.cancel": "Annuler",
+  "common.retry": "Réessayer",
+  "common.copy": "Copier",
+  "common.copied": "Copié",
+  "common.close": "Fermer",
+  "common.confirm": "Confirmer",
+  "onboarding.createWallet": "Créer un portefeuille",
+  "onboarding.setPassword": "Définir un mot de passe",
+  "onboarding.backupQuiz": "Quiz de sauvegarde",
+  "home.portfolio": "Portefeuille",
+  "send.title": "Envoyer",
+  "send.invalidAddress": "Adresse invalide",
+  "receive.title": "Recevoir",
+  "activity.title": "Activité",
+  "settings.title": "Paramètres",
+  "policy.allow": "Vérifications réussies",
+  "policy.warn": "Vérifier les avertissements",
+  "policy.block": "Bloqué",
+  "biometric.prompt": "Authentifiez-vous pour continuer"
+}

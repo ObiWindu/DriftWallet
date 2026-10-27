@@ -1,0 +1,38 @@
+{
+  "name": "driftwallet",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@9.12.0",
+  "scripts": {
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "lint": "eslint . --ext .ts,.tsx",
+    "gateway:dev": "pnpm --filter @drift/gateway dev",
+    "mobile:run:android": "pnpm --filter @drift/mobile android",
+    "mobile:run:ios": "pnpm --filter @drift/mobile ios",
+    "ext:dev:chrome": "pnpm --filter @drift/extension dev:chrome",
+    "ext:dev:firefox": "pnpm --filter @drift/extension dev:firefox",
+    "ext:build": "pnpm --filter @drift/extension build",
+    "ext:review": "pnpm --filter @drift/extension review",
+    "sbom": "node scripts/sbom.mjs",
+    "repro": "node scripts/repro.mjs verify",
+    "ext:package": "node scripts/package-extension.mjs",
+    "size:check": "node scripts/size-check.mjs",
+    "contrast:check": "node scripts/contrast-check.mjs",
+    "changeset": "changeset",
+    "changeset:status": "changeset status",
+    "check:versions": "node scripts/check-versions.mjs"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^3.0.3",
+    "@types/node": "^22.9.0",
+    "turbo": "^2.4.4",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "Apache-2.0"
+}

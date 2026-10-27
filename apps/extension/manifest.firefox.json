@@ -1,0 +1,9 @@
+{
+  "manifest_version": 3,
+  "browser_specific_settings": { "gecko": { "id": "drift@example.wallet" } },
+  "name": "DriftWallet",
+  "version": "0.1.0",
+  "permissions": ["storage", "alarms", "activeTab"],
+  "background": { "scripts": ["background.js"] },
+  "action": { "default_popup": "popup.html" }
+}

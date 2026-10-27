@@ -1,0 +1,14 @@
+name: fuzz
+on:
+  schedule:
+    - cron: "0 4 * * 1" # weekly, Monday 04:00 UTC
+  workflow_dispatch:
+jobs:
+  libfuzzer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: cargo install cargo-fuzz --locked
+      - working-directory: packages/signer/rust/fuzz
+        run: cargo fuzz run json_abi -- -max_total_time=600 -print_final_stats=1
