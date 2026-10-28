@@ -32,6 +32,7 @@ export {
   FEE_LEVELS,
   FeePicker,
   PolicyBanner,
+  WatchOnlyBanner,
   chainLabel,
   createCopyTimer,
   feeTierOptions,
@@ -49,4 +50,5 @@ export type {
   PolicyBannerProps,
   PolicyFinding,
   PolicyVerdictKind,
+  WatchOnlyBannerProps,
 } from "./components.js";

@@ -9,6 +9,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@solana/kit": "^8.5.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {

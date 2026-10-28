@@ -24,12 +24,17 @@ function envValue(name: string): string {
   return typeof raw === "string" ? raw.trim() : "";
 }
 
-function upstreamMode(): "stub" | "live" {
+export function upstreamMode(): "stub" | "live" {
+  const override = envValue("GATEWAY_ENV_MODE").toLowerCase();
+  if (override === "stub") return "stub";
+  if (override === "live") return "live";
   const has =
     envValue("ALCHEMY_KEY") ||
     envValue("SOLANA_RPC_URL") ||
     envValue("BTC_ESPLORA_URL") ||
-    envValue("ADA_KOIOS_URL");
+    envValue("ADA_KOIOS_URL") ||
+    envValue("EVM_RPC_URL") ||
+    envValue("PRICE_API_URL");
   return has ? "live" : "stub";
 }
 
@@ -59,20 +64,24 @@ export function buildServer(opts: GatewayOpts = {}) {
   app.addHook("onRequest", async (req, reply) => {
     const ip = req.ip ?? "unknown";
     const now = Date.now();
-    // Evict idle buckets when the map grows too large.
-    if (buckets.size >= MAX_BUCKETS) {
-      const cutoff = now - windowMs * 2;
-      for (const [k, v] of buckets) {
-        if (v.last < cutoff) buckets.delete(k);
-        if (buckets.size < MAX_BUCKETS) break;
-      }
-      if (buckets.size >= MAX_BUCKETS) {
-        const first = buckets.keys().next().value;
-        if (first !== undefined) buckets.delete(first);
-      }
-    }
     let b = buckets.get(ip);
-    if (!b) {
+    if (b) {
+      // LRU: move to end on access.
+      buckets.delete(ip);
+      buckets.set(ip, b);
+    } else {
+      // Evict idle buckets when the map grows too large.
+      if (buckets.size >= MAX_BUCKETS) {
+        const cutoff = now - windowMs * 2;
+        for (const [k, v] of buckets) {
+          if (v.last < cutoff) buckets.delete(k);
+          if (buckets.size < MAX_BUCKETS) break;
+        }
+        if (buckets.size >= MAX_BUCKETS) {
+          const first = buckets.keys().next().value;
+          if (first !== undefined) buckets.delete(first);
+        }
+      }
       b = { tokens: max, last: now };
       buckets.set(ip, b);
     }
@@ -149,19 +158,71 @@ export function buildServer(opts: GatewayOpts = {}) {
     }
     return { txHash: "0xstub", stub: true };
   });
-  app.post("/v1/sol/broadcast", async () => ({ txSig: "stub", stub: upstreamMode() === "stub" }));
-  app.post("/v1/btc/broadcast", async () => ({ txid: "stub", stub: upstreamMode() === "stub" }));
-  app.post("/v1/ada/broadcast", async () => ({ txHash: "stub", stub: upstreamMode() === "stub" }));
+  app.post("/v1/sol/broadcast", async (req) => {
+    const body = broadcastBody.parse(req.body);
+    const rpcUrl = envValue("SOLANA_RPC_URL");
+    const live = upstreamMode() === "live" && rpcUrl.length > 0;
+    if (live) {
+      try {
+        const res = await fetch(rpcUrl, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "sendTransaction", params: [body.rawTx, { encoding: "base64" }] }),
+        });
+        if (!res.ok) throw new Error(`upstream ${res.status}`);
+        const json = (await res.json()) as { result?: string; error?: { message?: string } };
+        if (json.error?.message) throw new Error(json.error.message);
+        if (typeof json.result === "string") return { txSig: json.result, stub: false };
+      } catch {
+        // fall through
+      }
+    }
+    return { txSig: "stub", stub: true };
+  });
+  app.post("/v1/btc/broadcast", async (req) => {
+    const body = broadcastBody.parse(req.body);
+    const baseUrl = envValue("BTC_ESPLORA_URL");
+    const live = upstreamMode() === "live" && baseUrl.length > 0;
+    if (live) {
+      try {
+        const res = await fetch(`${baseUrl.replace(/\/$/, "")}/tx`, {
+          method: "POST",
+          headers: { "content-type": "text/plain" },
+          body: body.rawTx,
+        });
+        if (!res.ok) throw new Error(`upstream ${res.status}`);
+        const text = (await res.text()).trim();
+        if (text.length > 0) return { txid: text, stub: false };
+      } catch {
+        // fall through
+      }
+    }
+    return { txid: "stub", stub: true };
+  });
+  app.post("/v1/ada/broadcast", async (req) => {
+    const body = broadcastBody.parse(req.body);
+    void body;
+    return { txHash: "stub", stub: upstreamMode() === "stub" || !envValue("ADA_KOIOS_URL") };
+  });
 
   app.get("/v1/phishlist", async () => ({
     domains: ["evil-drain.example", "wallet-verify-seed.example"],
-    updatedAt: new Date(0).toISOString(),
+    updatedAt: new Date().toISOString(),
   }));
 
   const subBody = z.object({ hashedAddrHex: z.string().regex(/^[0-9a-f]{64}$/), pushToken: z.string().min(8) });
   app.post("/v1/push/subscribe", async (req) => {
     const b = subBody.parse(req.body);
     void b;
+    return { ok: true };
+  });
+  const revokeBody = z.object({ hashedAddrHex: z.string().regex(/^[0-9a-f]{64}$/) });
+  app.post("/v1/push/revoke", async (req) => {
+    revokeBody.parse(req.body);
+    return { ok: true };
+  });
+  app.post("/v1/push/unsubscribe", async (req) => {
+    revokeBody.parse(req.body);
     return { ok: true };
   });
 
@@ -172,7 +233,7 @@ export function buildServer(opts: GatewayOpts = {}) {
     void hashForLog(p.addr);
     const key = `evm:${p.chainId}:${p.addr.toLowerCase()}`;
     const hit = cacheGet<{ balance: string; stub: boolean }>(key);
-    if (hit) return { stub: hit.stub, chainId: p.chainId, address: p.addr, balance: hit.balance, cached: true };
+    if (hit) return { stub: hit.stub, chainId: p.chainId, address: p.addr, balance: hit.balance, balanceWei: hit.balance, cached: true };
     const rpcUrl = envValue("EVM_RPC_URL");
     const live = upstreamMode() === "live" && rpcUrl.length > 0;
     let balance = "0";
@@ -197,7 +258,7 @@ export function buildServer(opts: GatewayOpts = {}) {
       }
     }
     cacheSet(key, { balance, stub }, BALANCE_TTL_MS);
-    return { stub, chainId: p.chainId, address: p.addr, balance, cached: false };
+    return { stub, chainId: p.chainId, address: p.addr, balance, balanceWei: balance, cached: false };
   });
 
   const solBalParams = z.object({ addr: z.string().min(1) });
@@ -205,10 +266,33 @@ export function buildServer(opts: GatewayOpts = {}) {
     const p = solBalParams.parse(req.params);
     void hashForLog(p.addr);
     const key = `sol:${p.addr}`;
-    const hit = cacheGet<{ balance: string }>(key);
-    if (hit) return { stub: true, address: p.addr, balance: hit.balance, cached: true };
-    cacheSet(key, { balance: "0" }, BALANCE_TTL_MS);
-    return { stub: true, address: p.addr, balance: "0", cached: false };
+    const hit = cacheGet<{ balance: string; stub: boolean }>(key);
+    if (hit) return { stub: hit.stub, address: p.addr, balance: hit.balance, lamports: hit.balance, cached: true };
+    const rpcUrl = envValue("SOLANA_RPC_URL");
+    const live = upstreamMode() === "live" && rpcUrl.length > 0;
+    let balance = "0";
+    let stub = !live;
+    if (live) {
+      try {
+        const res = await fetch(rpcUrl, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getBalance", params: [p.addr] }),
+        });
+        if (!res.ok) throw new Error(`upstream ${res.status}`);
+        const json = (await res.json()) as { result?: { value?: number } };
+        if (typeof json.result?.value === "number") {
+          balance = String(json.result.value);
+          stub = false;
+        } else {
+          stub = true;
+        }
+      } catch {
+        stub = true;
+      }
+    }
+    cacheSet(key, { balance, stub }, BALANCE_TTL_MS);
+    return { stub, address: p.addr, balance, lamports: balance, cached: false };
   });
 
   const btcParams = z.object({ addr: z.string().min(1) });
@@ -216,10 +300,29 @@ export function buildServer(opts: GatewayOpts = {}) {
     const p = btcParams.parse(req.params);
     void hashForLog(p.addr);
     const key = `btc:${p.addr}`;
-    const hit = cacheGet<{ utxos: unknown[] }>(key);
-    if (hit) return { stub: true, address: p.addr, utxos: hit.utxos, cached: true };
-    cacheSet(key, { utxos: [] }, BALANCE_TTL_MS);
-    return { stub: true, address: p.addr, utxos: [], cached: false };
+    const hit = cacheGet<{ utxos: unknown[]; stub: boolean }>(key);
+    if (hit) return { stub: hit.stub, address: p.addr, utxos: hit.utxos, cached: true };
+    const baseUrl = envValue("BTC_ESPLORA_URL");
+    const live = upstreamMode() === "live" && baseUrl.length > 0;
+    let utxos: unknown[] = [];
+    let stub = !live;
+    if (live) {
+      try {
+        const res = await fetch(`${baseUrl.replace(/\/$/, "")}/address/${encodeURIComponent(p.addr)}/utxo`);
+        if (!res.ok) throw new Error(`upstream ${res.status}`);
+        const json = (await res.json()) as unknown;
+        if (Array.isArray(json)) {
+          utxos = json;
+          stub = false;
+        } else {
+          stub = true;
+        }
+      } catch {
+        stub = true;
+      }
+    }
+    cacheSet(key, { utxos, stub }, BALANCE_TTL_MS);
+    return { stub, address: p.addr, utxos, cached: false };
   });
 
   const adaParams = z.object({ addr: z.string().min(1) });
@@ -227,20 +330,47 @@ export function buildServer(opts: GatewayOpts = {}) {
     const p = adaParams.parse(req.params);
     void hashForLog(p.addr);
     const key = `ada:${p.addr}`;
-    const hit = cacheGet<{ utxos: unknown[] }>(key);
-    if (hit) return { stub: true, address: p.addr, utxos: hit.utxos, cached: true };
-    cacheSet(key, { utxos: [] }, BALANCE_TTL_MS);
-    return { stub: true, address: p.addr, utxos: [], cached: false };
+    const hit = cacheGet<{ utxos: unknown[]; stub: boolean }>(key);
+    if (hit) return { stub: hit.stub, address: p.addr, utxos: hit.utxos, cached: true };
+    const baseUrl = envValue("ADA_KOIOS_URL");
+    const live = upstreamMode() === "live" && baseUrl.length > 0;
+    let utxos: unknown[] = [];
+    let stub = !live;
+    if (live) {
+      try {
+        const res = await fetch(`${baseUrl.replace(/\/$/, "")}/address_info`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ _addresses: [p.addr] }),
+        });
+        if (!res.ok) throw new Error(`upstream ${res.status}`);
+        const json = (await res.json()) as unknown;
+        if (Array.isArray(json)) {
+          utxos = json;
+          stub = false;
+        } else if (json && typeof json === "object") {
+          utxos = [json];
+          stub = false;
+        } else {
+          stub = true;
+        }
+      } catch {
+        stub = true;
+      }
+    }
+    cacheSet(key, { utxos, stub }, BALANCE_TTL_MS);
+    return { stub, address: p.addr, utxos, cached: false };
   });
 
   const tokensParams = z.object({ chain: z.string().min(1) });
   app.get("/v1/tokens/:chain", async (req) => {
     const p = tokensParams.parse(req.params);
     const key = `tokens:${p.chain}`;
-    const hit = cacheGet<{ tokens: unknown[] }>(key);
-    if (hit) return { stub: true, chain: p.chain, tokens: hit.tokens, cached: true };
-    cacheSet(key, { tokens: [] }, BALANCE_TTL_MS);
-    return { stub: true, chain: p.chain, tokens: [], cached: false };
+    const hit = cacheGet<{ tokens: unknown[]; stub: boolean }>(key);
+    if (hit) return { stub: hit.stub, chain: p.chain, tokens: hit.tokens, cached: true };
+    const stub = upstreamMode() === "stub";
+    cacheSet(key, { tokens: [], stub }, BALANCE_TTL_MS);
+    return { stub, chain: p.chain, tokens: [], cached: false };
   });
 
   // ---- Transaction simulation (U033; stub when upstream env missing) ----
@@ -266,12 +396,42 @@ export function buildServer(opts: GatewayOpts = {}) {
   });
   app.post("/v1/evm/simulate", async (req) => {
     const body = evmSimulateBody.parse(req.body);
-    void body;
-    // Live-mode proxy shape (documented, not executed in this env):
-    // POST upstream eth_call bundle with state overrides { from, to, data, value }
-    // -> trace asset balanceChanges [{ address, asset, before, after }].
-    // No live calls here; always return diff:null with a zod-validated envelope.
-    const resp = { stub: upstreamMode() === "stub", diff: null, cached: false };
+    const url = envValue("EVM_SIMULATE_URL") || envValue("EVM_RPC_URL");
+    const live = upstreamMode() === "live" && url.length > 0;
+    let diff: { balanceChanges: Array<{ address: string; asset: string; before: string; after: string }> } | null = null;
+    let stub = !live;
+    if (live) {
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "eth_call",
+            params: [{ from: body.from, to: body.to, data: body.dataHex ?? "0x", value: body.valueWei ? `0x${BigInt(body.valueWei).toString(16)}` : "0x0" }, "latest"],
+          }),
+        });
+        if (!res.ok) throw new Error(`upstream ${res.status}`);
+        const json = (await res.json()) as Record<string, unknown>;
+        const changes =
+          (json as { balanceChanges?: unknown }).balanceChanges ??
+          (json as { result?: { balanceChanges?: unknown } }).result?.balanceChanges ??
+          (json as { result?: unknown }).result;
+        if (Array.isArray(changes)) {
+          diff = { balanceChanges: changes as Array<{ address: string; asset: string; before: string; after: string }> };
+          stub = false;
+        } else if (json && typeof json === "object" && (json as { diff?: unknown }).diff) {
+          diff = (json as { diff: { balanceChanges: Array<{ address: string; asset: string; before: string; after: string }> } }).diff;
+          stub = false;
+        } else {
+          stub = true;
+        }
+      } catch {
+        stub = true;
+      }
+    }
+    const resp = { stub, diff, cached: false };
     return simulateResponseSchema.parse(resp);
   });
 
@@ -285,12 +445,42 @@ export function buildServer(opts: GatewayOpts = {}) {
     });
   app.post("/v1/sol/simulate", async (req) => {
     const body = solSimulateBody.parse(req.body);
-    void body;
-    // Live-mode proxy shape (documented, not executed in this env):
-    // POST upstream Solana simulateTransaction RPC with the base64 message/tx
-    // -> parse account balanceChanges [{ address, asset, before, after }].
-    // No live calls here; always return diff:null with a zod-validated envelope.
-    const resp = { stub: upstreamMode() === "stub", diff: null, cached: false };
+    const url = envValue("SOLANA_SIMULATE_URL") || envValue("SOLANA_RPC_URL");
+    const live = upstreamMode() === "live" && url.length > 0;
+    let diff: { balanceChanges: Array<{ address: string; asset: string; before: string; after: string }> } | null = null;
+    let stub = !live;
+    if (live) {
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "simulateTransaction",
+            params: [body.transactionBase64 ?? body.messageBase64, { encoding: "base64" }],
+          }),
+        });
+        if (!res.ok) throw new Error(`upstream ${res.status}`);
+        const json = (await res.json()) as Record<string, unknown>;
+        const changes =
+          (json as { balanceChanges?: unknown }).balanceChanges ??
+          (json as { result?: { value?: { balanceChanges?: unknown } } }).result?.value?.balanceChanges ??
+          (json as { result?: { balanceChanges?: unknown } }).result?.balanceChanges;
+        if (Array.isArray(changes)) {
+          diff = { balanceChanges: changes as Array<{ address: string; asset: string; before: string; after: string }> };
+          stub = false;
+        } else if (json && typeof json === "object" && (json as { diff?: unknown }).diff) {
+          diff = (json as { diff: { balanceChanges: Array<{ address: string; asset: string; before: string; after: string }> } }).diff;
+          stub = false;
+        } else {
+          stub = true;
+        }
+      } catch {
+        stub = true;
+      }
+    }
+    const resp = { stub, diff, cached: false };
     return simulateResponseSchema.parse(resp);
   });
 

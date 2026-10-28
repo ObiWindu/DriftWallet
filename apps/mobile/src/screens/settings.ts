@@ -58,6 +58,14 @@ export interface NetworkOption {
 }
 
 /** Mainnet is selectable only when the build enables it (SPEC DoD default off). */
+export const CRASH_REPORTING_DEFAULT = false;
+
+export function crashReportingConsent(value: unknown): boolean {
+  const parsed = z.boolean().safeParse(value);
+  if (!parsed.success) return CRASH_REPORTING_DEFAULT;
+  return parsed.data;
+}
+
 export function networkOptions(mainnetEnabled: boolean): NetworkOption[] {
   z.boolean().parse(mainnetEnabled);
   return [

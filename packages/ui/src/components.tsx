@@ -272,3 +272,31 @@ export function BiometricGate({ required, authenticated, onAuthenticate, lng = "
     </View>
   );
 }
+
+// ---------------------------------------------------------------------------
+// WatchOnlyBanner (I012): persistent "view only" banner for watch-only accounts.
+// ---------------------------------------------------------------------------
+
+export interface WatchOnlyBannerProps {
+  watchOnly?: boolean;
+  isWatchOnly?: boolean;
+  account?: { kind?: string } | null;
+  lng?: string;
+  testID?: string;
+  children?: unknown;
+}
+
+export function WatchOnlyBanner({ watchOnly, isWatchOnly, account, lng = "en", testID }: WatchOnlyBannerProps) {
+  const resolved =
+    watchOnly === true ||
+    isWatchOnly === true ||
+    account?.kind === "watch-only";
+  if (!resolved) return null;
+  const t = tFor(lng);
+  const label = t("watchOnly.banner") === "watchOnly.banner" ? "View only" : t("watchOnly.banner");
+  return (
+    <View testID={testID ?? "watch-only-banner"} accessibilityLabel={label}>
+      <Text testID="watch-only-banner-text">{label}</Text>
+    </View>
+  );
+}

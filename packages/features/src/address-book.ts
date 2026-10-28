@@ -19,6 +19,8 @@ export const ChainAddressSchema = z.object({
   chain: z.string().min(1),
   address: z.string().min(1),
   firstSeen: z.number().int().nonnegative(),
+  lastUsed: z.number().int().nonnegative().optional(),
+  verified: z.boolean().optional(),
 });
 export type ChainAddress = z.infer<typeof ChainAddressSchema>;
 
@@ -120,6 +122,26 @@ export class ContactBook {
       }
     }
     return out;
+  }
+
+  /** Record last-used timestamp for a contact's chain entry. */
+  markUsed(name: string, chain: string, nowMs?: number): Contact | null {
+    const contact = this.contacts.get(normalizeName(name));
+    if (!contact) return null;
+    const slot = contact.addresses.find((a) => a.chain === chain);
+    if (!slot) return null;
+    slot.lastUsed = nowMs ?? Date.now();
+    return ContactSchema.parse(contact);
+  }
+
+  /** Set verified-contact flag for a contact's chain entry. */
+  setVerified(name: string, chain: string, verified: boolean): Contact | null {
+    const contact = this.contacts.get(normalizeName(name));
+    if (!contact) return null;
+    const slot = contact.addresses.find((a) => a.chain === chain);
+    if (!slot) return null;
+    slot.verified = verified;
+    return ContactSchema.parse(contact);
   }
 
   list(): Contact[] {
