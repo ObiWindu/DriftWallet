@@ -19,12 +19,17 @@ function hashForLog(addr: string): string {
   return createHash("sha256").update(addr).digest("hex").slice(0, 12);
 }
 
+function envValue(name: string): string {
+  const raw = process.env[name];
+  return typeof raw === "string" ? raw.trim() : "";
+}
+
 function upstreamMode(): "stub" | "live" {
   const has =
-    process.env.ALCHEMY_KEY ??
-    process.env.SOLANA_RPC_URL ??
-    process.env.BTC_ESPLORA_URL ??
-    process.env.ADA_KOIOS_URL;
+    envValue("ALCHEMY_KEY") ||
+    envValue("SOLANA_RPC_URL") ||
+    envValue("BTC_ESPLORA_URL") ||
+    envValue("ADA_KOIOS_URL");
   return has ? "live" : "stub";
 }
 
@@ -33,7 +38,8 @@ export function buildServer(opts: GatewayOpts = {}) {
   const cache = new Map<string, Entry>();
   const max = opts.rateLimitMax ?? 100;
   const windowMs = opts.rateLimitWindowMs ?? 60_000;
-  // token bucket per ip
+  // token bucket per ip, bounded to avoid unbounded memory growth
+  const MAX_BUCKETS = 10_000;
   const buckets = new Map<string, { tokens: number; last: number }>();
 
   function cacheGet<T>(key: string): T | null {
@@ -53,6 +59,18 @@ export function buildServer(opts: GatewayOpts = {}) {
   app.addHook("onRequest", async (req, reply) => {
     const ip = req.ip ?? "unknown";
     const now = Date.now();
+    // Evict idle buckets when the map grows too large.
+    if (buckets.size >= MAX_BUCKETS) {
+      const cutoff = now - windowMs * 2;
+      for (const [k, v] of buckets) {
+        if (v.last < cutoff) buckets.delete(k);
+        if (buckets.size < MAX_BUCKETS) break;
+      }
+      if (buckets.size >= MAX_BUCKETS) {
+        const first = buckets.keys().next().value;
+        if (first !== undefined) buckets.delete(first);
+      }
+    }
     let b = buckets.get(ip);
     if (!b) {
       b = { tokens: max, last: now };
@@ -86,8 +104,25 @@ export function buildServer(opts: GatewayOpts = {}) {
     const key = `prices:${q.assets}`;
     const hit = cacheGet<{ prices: Record<string, number>; cached: boolean; stub: boolean }>(key);
     if (hit) return { ...hit, cached: true };
-    // Stubbed; production proxies CoinGecko with 60s cache. No keys held.
-    const val = { prices: { ETH: 0, SOL: 0, ADA: 0, BTC: 0 }, cached: false, stub: upstreamMode() === "stub" };
+    const priceUrl = envValue("PRICE_API_URL");
+    const live = upstreamMode() === "live" && priceUrl.length > 0;
+    let prices: Record<string, number> = { ETH: 0, SOL: 0, ADA: 0, BTC: 0 };
+    let stub = !live;
+    if (live) {
+      try {
+        const res = await fetch(priceUrl);
+        if (!res.ok) throw new Error(`upstream ${res.status}`);
+        const json = (await res.json()) as Record<string, unknown>;
+        for (const asset of q.assets.split(",")) {
+          const v = json[asset.trim().toUpperCase()];
+          if (typeof v === "number" && Number.isFinite(v)) prices[asset.trim().toUpperCase()] = v;
+        }
+        stub = false;
+      } catch {
+        stub = true;
+      }
+    }
+    const val = { prices, cached: false, stub };
     cacheSet(key, val, PRICE_TTL_MS);
     return val;
   });
@@ -95,8 +130,24 @@ export function buildServer(opts: GatewayOpts = {}) {
   const broadcastBody = z.object({ rawTx: z.string().min(1) });
   app.post("/v1/evm/:chainId/broadcast", async (req) => {
     const body = broadcastBody.parse(req.body);
-    void body;
-    return { txHash: "0xstub", stub: upstreamMode() === "stub" };
+    const rpcUrl = envValue("EVM_RPC_URL");
+    const live = upstreamMode() === "live" && rpcUrl.length > 0;
+    if (live) {
+      try {
+        const res = await fetch(rpcUrl, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_sendRawTransaction", params: [body.rawTx] }),
+        });
+        if (!res.ok) throw new Error(`upstream ${res.status}`);
+        const json = (await res.json()) as { result?: string; error?: { message?: string } };
+        if (json.error?.message) throw new Error(json.error.message);
+        if (typeof json.result === "string") return { txHash: json.result, stub: false };
+      } catch {
+        // fall through to stub
+      }
+    }
+    return { txHash: "0xstub", stub: true };
   });
   app.post("/v1/sol/broadcast", async () => ({ txSig: "stub", stub: upstreamMode() === "stub" }));
   app.post("/v1/btc/broadcast", async () => ({ txid: "stub", stub: upstreamMode() === "stub" }));
@@ -120,11 +171,33 @@ export function buildServer(opts: GatewayOpts = {}) {
     const p = evmBalParams.parse(req.params);
     void hashForLog(p.addr);
     const key = `evm:${p.chainId}:${p.addr.toLowerCase()}`;
-    const hit = cacheGet<{ balance: string }>(key);
-    if (hit) return { stub: true, chainId: p.chainId, address: p.addr, balance: hit.balance, cached: true };
-    const balance = "0";
-    cacheSet(key, { balance }, BALANCE_TTL_MS);
-    return { stub: true, chainId: p.chainId, address: p.addr, balance, cached: false };
+    const hit = cacheGet<{ balance: string; stub: boolean }>(key);
+    if (hit) return { stub: hit.stub, chainId: p.chainId, address: p.addr, balance: hit.balance, cached: true };
+    const rpcUrl = envValue("EVM_RPC_URL");
+    const live = upstreamMode() === "live" && rpcUrl.length > 0;
+    let balance = "0";
+    let stub = !live;
+    if (live) {
+      try {
+        const res = await fetch(rpcUrl, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getBalance", params: [p.addr, "latest"] }),
+        });
+        if (!res.ok) throw new Error(`upstream ${res.status}`);
+        const json = (await res.json()) as { result?: string };
+        if (typeof json.result === "string" && /^0x[0-9a-fA-F]+$/.test(json.result)) {
+          balance = BigInt(json.result).toString();
+          stub = false;
+        } else {
+          stub = true;
+        }
+      } catch {
+        stub = true;
+      }
+    }
+    cacheSet(key, { balance, stub }, BALANCE_TTL_MS);
+    return { stub, chainId: p.chainId, address: p.addr, balance, cached: false };
   });
 
   const solBalParams = z.object({ addr: z.string().min(1) });
@@ -248,5 +321,6 @@ export function buildServer(opts: GatewayOpts = {}) {
 
 if (process.argv[1]?.endsWith("index.ts")) {
   const app = buildServer();
-  await app.listen({ port: Number(process.env.PORT ?? 8787), host: "127.0.0.1" });
+  const host = process.env.HOST ?? (process.env.NODE_ENV === "production" ? "0.0.0.0" : "127.0.0.1");
+  await app.listen({ port: Number(process.env.PORT ?? 8787), host });
 }

@@ -19,15 +19,15 @@ describe("send helpers", () => {
   it("picks fees low/med/high", () => {
     expect(pickFee("low").multiplier).toBeLessThan(pickFee("med").multiplier);
     expect(pickFee("med").multiplier).toBeLessThan(pickFee("high").multiplier);
-    expect(quoteFee(1000, "med")).toBe(1000);
-    expect(quoteFee(1000, "high")).toBe(1500);
+    expect(quoteFee(1000n, "med")).toBe(1000n);
+    expect(quoteFee(1000n, "high")).toBe(1500n);
   });
 
   it("gates amounts over $100 on biometrics", () => {
-    expect(requiresBiometric(100)).toBe(false);
-    expect(requiresBiometric(100.01)).toBe(true);
-    expect(gateSend(50, false).allowed).toBe(true);
-    expect(gateSend(500, false).allowed).toBe(false);
-    expect(gateSend(500, true).allowed).toBe(true);
+    expect(requiresBiometric(10_000n)).toBe(false);
+    expect(requiresBiometric(10_001n)).toBe(true);
+    expect(gateSend(5_000n, false).allowed).toBe(true);
+    expect(gateSend(50_000n, false).allowed).toBe(false);
+    expect(gateSend(50_000n, true).allowed).toBe(true);
   });
 });

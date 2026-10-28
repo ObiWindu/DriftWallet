@@ -5,13 +5,9 @@ import { z } from "zod";
 
 // Bigint-only money helpers for @drift/mobile (U000, mobile scope).
 //
-// U000 AUDIT (mobile): `send.ts` `quoteFee(medianFeeMinor: number, …)` and
-// `requiresBiometric(usdAmount: number)` take JS numbers. Those are kept
-// untouched (existing tests pin them; median fee estimates arrive from the
-// gateway as JSON numbers and stay below 2^53 in practice). The rule for all
-// NEW mobile code: balances, amounts and fees are bigint; floats never touch
-// money. `screens/send.ts` builds on the helpers below, not on the numeric
-// legacy path.
+// U000 AUDIT (mobile): `send.ts` is bigint-only. Median fee estimates arrive
+// from the gateway and are converted to bigint at the boundary. `screens/send.ts`
+// builds on the helpers below and in `send.ts`. No floats touch money.
 //
 // Contract mirror: same semantics as @drift/core `formatUnits`/`parseUnits`
 // (read-only reference). Local copy because neither package has a package

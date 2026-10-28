@@ -1,0 +1,54 @@
+name: release
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -w typecheck
+      - run: pnpm -w test
+      - run: cargo test --manifest-path packages/signer/rust/Cargo.toml
+      - run: cargo clippy --manifest-path packages/signer/rust/Cargo.toml -- -D warnings
+      - run: pnpm contrast:check
+      - run: node scripts/check-versions.mjs
+  package-extension:
+    needs: [gate]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run ext:build
+      - run: pnpm run ext:package
+      - run: cat apps/extension/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: driftwallet-extension
+          path: |
+            apps/extension/drift-wallet-chrome.zip
+            apps/extension/drift-wallet-firefox.zip
+            apps/extension/SHA256SUMS
+  sbom:
+    needs: [gate]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run sbom
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.json

@@ -1,0 +1,15 @@
+rules:
+  - id: no-float-money
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: "Money paths must use bigint; do not use Number() or parseFloat() on amounts, fees, or balances."
+    paths:
+      include:
+        - "**/money.ts"
+        - "**/amount.ts"
+        - "**/send.ts"
+        - "**/popup.ts"
+        - "**/popup-view.ts"
+    pattern-either:
+      - pattern: Number($X)
+      - pattern: parseFloat($X)

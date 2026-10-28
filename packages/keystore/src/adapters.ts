@@ -81,6 +81,10 @@ function browserLocal(): ChromeLocalArea | null {
   const g = globalThis as unknown as { browser?: { storage?: { local?: ChromeLocalArea } } };
   return g.browser?.storage?.local ?? null;
 }
+function browserSession(): ChromeSessionArea | null {
+  const g = globalThis as unknown as { browser?: { storage?: { session?: ChromeSessionArea } } };
+  return g.browser?.storage?.session ?? null;
+}
 
 function vaultKey(vaultId: string): string {
   return `drift:vault:${vaultId}`;
@@ -148,6 +152,7 @@ export class ChromeStorageAdapter implements VaultStorage {
 // ---- Firefox: browser.* variant ----
 export class FirefoxStorageAdapter implements VaultStorage {
   private fallback = new Map<string, EncryptedVault>();
+  private fallbackSession = new Map<string, string>();
 
   async save(vaultId: string, vault: EncryptedVault): Promise<void> {
     z.string().min(1).parse(vaultId);
@@ -178,5 +183,27 @@ export class FirefoxStorageAdapter implements VaultStorage {
       return;
     }
     await area.remove(vaultKey(vaultId));
+  }
+
+  async saveSessionId(vaultId: string, sessionId: number): Promise<void> {
+    z.string().min(1).parse(vaultId);
+    z.number().int().nonnegative().parse(sessionId);
+    const area = browserSession();
+    if (!area) {
+      this.fallbackSession.set(vaultId, String(sessionId));
+      return;
+    }
+    await area.set({ [`drift:session:${vaultId}`]: sessionId });
+  }
+  async loadSessionId(vaultId: string): Promise<number | null> {
+    const area = browserSession();
+    if (!area) {
+      const hit = this.fallbackSession.get(vaultId);
+      return hit === undefined ? null : z.coerce.number().int().parse(hit);
+    }
+    const res = await area.get(`drift:session:${vaultId}`);
+    const raw = res[`drift:session:${vaultId}`];
+    if (raw === undefined || raw === null) return null;
+    return z.coerce.number().int().nonnegative().parse(raw);
   }
 }

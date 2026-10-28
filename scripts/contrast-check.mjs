@@ -3,18 +3,16 @@
 
 // contrast-check.mjs (U001/U052 a11y gate): verify design-token color pairs
 // meet WCAG AA (contrast >= 4.5:1 for normal text).
-// Defensive: tokens file is owned by Stream A and may not exist yet — in that
-// case print a warning and exit 0 (vacuous pass), so this never blocks CI
-// before the tokens land.
-// Usage: node scripts/contrast-check.mjs [--tokens packages/ui/src/tokens.json]
+//
+// The canonical tokens live in packages/ui/src/tokens.ts. This script parses
+// that TS module statically (no JSON artifact, no transpiler) so the gate is
+// enforceable in CI without a build step. A missing/unparseable tokens file
+// or any pair below 4.5:1 exits non-zero.
+
 import fs from "node:fs";
 import path from "node:path";
 
-const CANDIDATES = [
-  "packages/ui/src/tokens.json",
-  "packages/ui/tokens.json",
-  "packages/ui/src/tokens.ts",
-];
+const TOKENS_PATH = "packages/ui/src/tokens.ts";
 
 function luminance(hex) {
   const m = hex.replace("#", "");
@@ -31,45 +29,66 @@ function ratio(a, b) {
   return (hi + 0.05) / (lo + 0.05);
 }
 
-const ti = process.argv.indexOf("--tokens");
-let tokenPath = ti >= 0 ? process.argv[ti + 1] : CANDIDATES.find((c) => fs.existsSync(path.join(process.cwd(), c)));
-
-if (!tokenPath) {
-  console.warn("contrast-check: no tokens file found (Stream A in-flight) — vacuous PASS with warning");
-  process.exit(0);
-}
-
-const abs = path.join(process.cwd(), tokenPath);
-let tokens;
-try {
-  const raw = fs.readFileSync(abs, "utf8");
-  tokens = abs.endsWith(".json") ? JSON.parse(raw) : null;
-  if (!tokens) {
-    console.warn(`contrast-check: ${tokenPath} is TS, not JSON — static parse skipped, vacuous PASS`);
-    process.exit(0);
-  }
-} catch (e) {
-  console.error(`contrast-check: cannot read ${tokenPath}: ${e.message}`);
+const abs = path.join(process.cwd(), TOKENS_PATH);
+if (!fs.existsSync(abs)) {
+  console.error(`contrast-check FAILED: tokens file missing: ${TOKENS_PATH}`);
   process.exit(1);
 }
+const src = fs.readFileSync(abs, "utf8");
 
-// Expected shape: { pairs: [{ fg, bg, name }] } or { light: {...}, dark: {...} }
-// with `text`/`background` keys. Anything else -> warn + pass (tokens evolving).
-const pairs = tokens.pairs ??
-  ["light", "dark"]
-    .filter((t) => tokens[t]?.text && tokens[t]?.background)
-    .map((t) => ({ name: `${t} text/bg`, fg: tokens[t].text, bg: tokens[t].background }));
-
-if (!pairs.length) {
-  console.warn("contrast-check: no recognizable color pairs — vacuous PASS with warning");
-  process.exit(0);
+function parsePalette(name) {
+  const re = new RegExp(`export const ${name}: Palette = \\{([\\s\\S]*?)\\};`, "m");
+  const m = src.match(re);
+  if (!m) throw new Error(`palette ${name} not found`);
+  const body = m[1];
+  const out = {};
+  const kv = /(\w+)\s*:\s*"(#[0-9a-fA-F]{6})"/g;
+  let mm;
+  while ((mm = kv.exec(body)) !== null) out[mm[1]] = mm[2];
+  if (Object.keys(out).length === 0) throw new Error(`palette ${name} empty`);
+  return out;
 }
 
+let light, dark;
+try {
+  light = parsePalette("light");
+  dark = parsePalette("dark");
+} catch (e) {
+  console.error(`contrast-check FAILED: ${e.message}`);
+  process.exit(1);
+}
+const themes = { light, dark };
+
+const PAIR_DEFS = [
+  { theme: "light", fg: "text", bg: "background" },
+  { theme: "light", fg: "text", bg: "surface" },
+  { theme: "light", fg: "textMuted", bg: "background" },
+  { theme: "light", fg: "textMuted", bg: "surface" },
+  { theme: "light", fg: "primary", bg: "background" },
+  { theme: "light", fg: "danger", bg: "background" },
+  { theme: "light", fg: "warning", bg: "background" },
+  { theme: "light", fg: "success", bg: "background" },
+  { theme: "dark", fg: "text", bg: "background" },
+  { theme: "dark", fg: "text", bg: "surface" },
+  { theme: "dark", fg: "textMuted", bg: "background" },
+  { theme: "dark", fg: "textMuted", bg: "surface" },
+  { theme: "dark", fg: "primary", bg: "background" },
+  { theme: "dark", fg: "danger", bg: "background" },
+  { theme: "dark", fg: "warning", bg: "background" },
+  { theme: "dark", fg: "success", bg: "background" },
+];
+
 let failed = 0;
-for (const p of pairs) {
-  const r = ratio(p.fg, p.bg);
+for (const p of PAIR_DEFS) {
+  const fg = themes[p.theme][p.fg];
+  const bg = themes[p.theme][p.bg];
+  if (!fg || !bg) {
+    console.error(`contrast-check FAILED: missing color ${p.theme}.${p.fg}/${p.bg}`);
+    process.exit(1);
+  }
+  const r = ratio(fg, bg);
   const ok = r >= 4.5;
-  console.log(`  ${ok ? "PASS" : "FAIL"} ${p.name}: ${p.fg} on ${p.bg} = ${r.toFixed(2)}:1`);
+  console.log(`  ${ok ? "PASS" : "FAIL"} ${p.theme} ${p.fg} on ${p.bg}: ${fg} on ${bg} = ${r.toFixed(2)}:1`);
   if (!ok) failed++;
 }
 if (failed) {

@@ -6,6 +6,8 @@
 // - Fee picker low/med/high.
 // - Biometric gate for amounts > $100 (USD equivalent).
 
+import { z } from "zod";
+
 export type SendChain = "ethereum" | "solana" | "cardano" | "bitcoin";
 
 export const ADDRESS_PATTERNS: Record<SendChain, RegExp> = {
@@ -45,20 +47,26 @@ export function pickFee(level: FeeLevel): FeeOption {
   return FEE_OPTIONS[level];
 }
 
-/** Quote the network fee from a median estimate (minor units as number). */
-export function quoteFee(medianFeeMinor: number, level: FeeLevel): number {
-  if (!Number.isFinite(medianFeeMinor) || medianFeeMinor < 0) {
-    throw new Error("bad median fee");
-  }
-  return Math.ceil(medianFeeMinor * FEE_OPTIONS[level].multiplier);
+/** Integer fee multipliers (avoid floats): low 4/5, med 1/1, high 3/2. */
+export const FEE_SCALE: Record<FeeLevel, { num: bigint; den: bigint }> = {
+  low: { num: 4n, den: 5n },
+  med: { num: 1n, den: 1n },
+  high: { num: 3n, den: 2n },
+};
+
+/** Quote the network fee from a median estimate (minor units as bigint). */
+export function quoteFee(medianFeeMinor: bigint, level: FeeLevel): bigint {
+  const v = z.bigint().min(0n).parse(medianFeeMinor);
+  const scale = FEE_SCALE[level];
+  return (v * scale.num + scale.den - 1n) / scale.den;
 }
 
-/** Biometric (or device-credential) gate threshold in USD equivalent. */
-export const BIOMETRIC_THRESHOLD_USD = 100;
+/** Biometric (or device-credential) gate threshold in USD cents. */
+export const BIOMETRIC_THRESHOLD_CENTS = 10_000n;
 
-export function requiresBiometric(usdAmount: number): boolean {
-  if (!Number.isFinite(usdAmount) || usdAmount < 0) throw new Error("bad amount");
-  return usdAmount > BIOMETRIC_THRESHOLD_USD;
+export function requiresBiometric(usdAmountCents: bigint): boolean {
+  const v = z.bigint().min(0n).parse(usdAmountCents);
+  return v > BIOMETRIC_THRESHOLD_CENTS;
 }
 
 export interface SendGate {
@@ -67,8 +75,8 @@ export interface SendGate {
   reason: string;
 }
 
-export function gateSend(usdAmount: number, biometricOk: boolean): SendGate {
-  const biometricRequired = requiresBiometric(usdAmount);
+export function gateSend(usdAmountCents: bigint, biometricOk: boolean): SendGate {
+  const biometricRequired = requiresBiometric(usdAmountCents);
   if (biometricRequired && !biometricOk) {
     return { allowed: false, biometricRequired, reason: "biometric-required" };
   }
