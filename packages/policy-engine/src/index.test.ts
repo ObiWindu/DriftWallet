@@ -8,6 +8,7 @@ import {
   checkEip712Domain,
   checkFeeSanity,
   checkSpendingLimit,
+  compareDeltas,
   compareSimulation,
   evaluate,
   isPhishingDomain,
@@ -182,6 +183,28 @@ describe("policy-engine iteration 3 — limits, domains, selectors, dynamic phis
       { typedDataDomain: { name: "MetaMask" } },
     );
     return expect(v).resolves.toMatchObject({ verdict: "warn" });
+  });
+
+  it("compareDeltas: match within tolerance passes, mismatch/missing blocks", () => {
+    const sim = [
+      { address: "0xAbC", token: "native", before: "1010", after: "0", delta: "-1010" },
+      { address: "0xdef", token: "native", before: "0", after: "1000", delta: "1000" },
+    ];
+    const claimed = [
+      { address: "0xabc", token: "native", delta: "-1010" },
+      { address: "0xdef", token: "native", delta: "1000" },
+    ];
+    expect(compareDeltas(claimed, sim, 0n)).toBeNull();
+    // fee tolerance: sender delta off by exactly the fee -> within tolerance
+    expect(compareDeltas([{ address: "0xabc", token: "native", delta: "-1000" }], sim, 10n)).toBeNull();
+    const bad = compareDeltas([{ address: "0xdef", token: "native", delta: "999" }], sim, 0n);
+    expect(bad?.code).toBe("SIM_MISMATCH");
+    const missing = compareDeltas([{ address: "0x999", token: "native", delta: "-1" }], sim, 0n);
+    expect(missing?.severity).toBe("block");
+    // evaluate() wires claimedDeltas + simulated into a block verdict
+    return expect(
+      evaluate(baseIntent, { claimedDeltas: [{ address: "0x1", token: "native", delta: "-99999" }], simulated: sim }),
+    ).resolves.toMatchObject({ verdict: "block" });
   });
 
   it("setApprovalForAll(true) and max permit warn", () => {

@@ -1,0 +1,23 @@
+{
+  "name": "@drift/e2e",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@drift/gateway": "workspace:*",
+    "@drift/gateway-client": "workspace:*",
+    "@drift/policy-engine": "workspace:*",
+    "fastify": "^5.0.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  },
+  "license": "Apache-2.0"
+}

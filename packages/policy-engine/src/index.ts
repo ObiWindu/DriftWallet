@@ -251,12 +251,47 @@ export function checkDangerousSelector(dataHex: string | undefined): Finding | n
   return null;
 }
 
+/** A claimed balance delta (what the intent says will happen), per address+token. */
+export const DeltaClaimSchema = z.object({
+  address: z.string(),
+  token: z.string(),
+  delta: z.string().regex(/^-?\d+$/),
+});
+export type DeltaClaim = z.infer<typeof DeltaClaimSchema>;
+
+/**
+ * Compare claimed deltas against a gateway simulation. Matching is by
+ * address+token (case-insensitive address); each claimed delta must appear in
+ * the simulation within `tolerance` (use the fee estimate for the fee asset).
+ * A claimed address missing from the simulation is a block.
+ */
+export function compareDeltas(claimed: DeltaClaim[], simulated: BalanceDiff[], tolerance: bigint = 0n): Finding | null {
+  const c = z.array(DeltaClaimSchema).parse(claimed);
+  const s = z.array(BalanceDiffSchema).parse(simulated);
+  if (typeof tolerance !== "bigint" || tolerance < 0n) throw new Error("tolerance must be a non-negative bigint");
+  for (const claim of c) {
+    const match = s.find(
+      (d) => d.address.toLowerCase() === claim.address.toLowerCase() && d.token === claim.token,
+    );
+    if (!match) {
+      return { severity: "block", code: "SIM_MISMATCH", message: `simulation has no entry for ${claim.address} (${claim.token})` };
+    }
+    const diff = BigInt(match.delta) >= BigInt(claim.delta) ? BigInt(match.delta) - BigInt(claim.delta) : BigInt(claim.delta) - BigInt(match.delta);
+    if (diff > tolerance) {
+      return { severity: "block", code: "SIM_MISMATCH", message: `claimed delta ${claim.delta} != simulated ${match.delta} for ${claim.token}` };
+    }
+  }
+  return null;
+}
+
 export interface EvaluateCtx {
   history?: string[];
   feeFiatUsd?: number;
   claimed?: BalanceDiff[];
   simulated?: BalanceDiff[] | null;
   tolerance?: bigint;
+  /** Iteration 4: claimed deltas vs gateway simulation (end-to-end sim gate). */
+  claimedDeltas?: DeltaClaim[];
   /** Iteration 3 additions (all optional; absence preserves old verdicts). */
   phishDomains?: string[];
   spentBaseUnits?: string;
@@ -332,6 +367,15 @@ export async function evaluate(intent: Intent, ctx: EvaluateCtx = {}): Promise<V
       return { verdict: "block", findings };
     }
     findings.push({ severity: "info", code: "SIM_OK", message: "claimed balance diffs match simulation" });
+  }
+  // iteration 4: delta-based simulation gate (claimed deltas vs gateway sim)
+  if (ctx.claimedDeltas && ctx.simulated) {
+    const f = compareDeltas(ctx.claimedDeltas, ctx.simulated, tolerance);
+    if (f) {
+      findings.push(f);
+      return { verdict: "block", findings };
+    }
+    findings.push({ severity: "info", code: "SIM_OK", message: "claimed deltas match simulation" });
   }
   if (findings.some((f) => f.severity === "block")) return { verdict: "block", findings };
   if (findings.some((f) => f.severity === "warn")) return { verdict: "warn", findings };
