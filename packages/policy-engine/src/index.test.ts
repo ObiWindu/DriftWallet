@@ -2,7 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { checkAddressPoison, checkFeeSanity, compareSimulation, evaluate, simulateEvm, simulateSolana } from "./index.js";
+import {
+  checkAddressPoison,
+  checkDangerousSelector,
+  checkEip712Domain,
+  checkFeeSanity,
+  checkSpendingLimit,
+  compareSimulation,
+  evaluate,
+  isPhishingDomain,
+  simulateEvm,
+  simulateSolana,
+} from "./index.js";
 
 describe("policy-engine", () => {
   it("blocks phishing", async () => {
@@ -135,5 +146,52 @@ describe("policy-engine", () => {
     const blocked = await evaluate(intent, { claimed: offByOne, simulated: sim, tolerance: 0n });
     expect(blocked.verdict).toBe("block");
     expect(blocked.findings.some((f) => f.code === "SIM_MISMATCH")).toBe(true);
+  });
+});
+
+describe("policy-engine iteration 3 — limits, domains, selectors, dynamic phish", () => {
+  const baseIntent = {
+    chainId: "eip155:1", kind: "native-transfer" as const, from: "0x1", to: "0x2",
+    amountBaseUnits: "1000", feeBaseUnits: "10", origin: "https://app.uniswap.org",
+  };
+
+  it("dynamic phish list extends the built-in one", () => {
+    expect(isPhishingDomain("https://new-scam.example")).toBe(false);
+    expect(isPhishingDomain("https://new-scam.example", ["new-scam.example"])).toBe(true);
+    expect(isPhishingDomain("https://sub.new-scam.example", ["new-scam.example"])).toBe(true);
+    expect(isPhishingDomain("not a url", [])).toBe(true);
+    const v = evaluate(baseIntent, { phishDomains: ["app.uniswap.org"] });
+    return expect(v).resolves.toMatchObject({ verdict: "block" });
+  });
+
+  it("spending limit: blocks when exceeded, warns at >=80%, silent below", () => {
+    expect(checkSpendingLimit("0", "100", "1000")).toBeNull();
+    expect(checkSpendingLimit("0", "800", "1000")?.code).toBe("SPEND_LIMIT_NEAR");
+    expect(checkSpendingLimit("900", "101", "1000")?.code).toBe("SPEND_LIMIT_EXCEEDED");
+    expect(checkSpendingLimit("0", "100", "0")).toBeNull(); // no limit
+    return expect(evaluate(baseIntent, { spentBaseUnits: "950", spendLimitBaseUnits: "1000" }))
+      .resolves.toMatchObject({ verdict: "block" });
+  });
+
+  it("EIP-712 domain mismatch warns; matching name passes", () => {
+    expect(checkEip712Domain({ name: "Uniswap" }, "https://app.uniswap.org") === null).toBe(true);
+    const f = checkEip712Domain({ name: "MetaMask", verifyingContract: "0xabc" }, "https://app.uniswap.org");
+    expect(f?.code).toBe("EIP712_DOMAIN_MISMATCH");
+    const v = evaluate(
+      { ...baseIntent, kind: "dapp-sign", dataHex: "0x1234" },
+      { typedDataDomain: { name: "MetaMask" } },
+    );
+    return expect(v).resolves.toMatchObject({ verdict: "warn" });
+  });
+
+  it("setApprovalForAll(true) and max permit warn", () => {
+    const one = (1n).toString(16).padStart(64, "0");
+    const max = ((1n << 256n) - 1n).toString(16).padStart(64, "0");
+    const saf = `0xa22cb465${"00".repeat(32)}${one}`;
+    expect(checkDangerousSelector(saf)?.code).toBe("NFT_APPROVAL_ALL");
+    const permit = `0xd505accf${"00".repeat(32)}${"00".repeat(32)}${max}${"00".repeat(64)}`;
+    expect(checkDangerousSelector(permit)?.code).toBe("PERMIT_INFINITE");
+    expect(checkDangerousSelector(`0xa22cb465${"00".repeat(32)}${"00".repeat(31)}00`)).toBeNull();
+    expect(checkDangerousSelector(undefined)).toBeNull();
   });
 });

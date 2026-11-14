@@ -60,3 +60,18 @@ Rust signer re-validates every intent.
   banner when the ed25519-bip32 path yields a different address. WASM digest
   re-recorded after signer changes (`repro record`); vectors from
   `cardano-serialization-lib` fixtures.
+
+---
+
+## Iteration 3 deltas
+
+| New surface | Threats | Mitigations shipped |
+|---|---|---|
+| Gateway live proxies (per-chain RPC, fee, tokens, tx status, prices/history, swap quote, NFT index, Koios submit, `/rpc` passthrough) | SSRF via env/config, unbounded memory, data exfiltration | Env-only config (no request-controlled hosts); allowlisted read-only JSON-RPC methods; bounded LRU caches + rate-limit buckets; addresses only ever sha256-hashed in logs/push; `stub` flag on every response so clients never mistake stub for live |
+| Swap quotes (0x/Jupiter via gateway) | Malicious quote / price impact | Server-side normalization + zod validation; client-side impact tiers (>=3% warn, >=10% block); exact allowance default, infinite needs typed reason |
+| Spending limits + duress PIN | Coercion, runaway session spend | Per-session bigint accumulator, hard cap throws before signing; duress PIN opens a decoy vault only, fires `onDuressUnlock`; `wipeAll` irreversible panic |
+| EIP-712 domain check | Phishing typed-data with foreign domain | domain.name vs origin host mismatch -> warn/step-up; phish list (built-in + gateway dynamic) -> block |
+| setApprovalForAll / permit | Unlimited NFT/token spend | Selector scan warns on `true`/max value; approval screen shows decoded call |
+| WC sessions | Expired sessions used, phishing proposer, off-namespace requests | `expireSessions`/`pruneExpiredProposals` on wake, phish guard on proposal intake, `sessionCoversChain` gate |
+| Portfolio/alerts/NFTs/recipient resolution | PII leakage, poison addresses, spam NFTs | Local evaluation only; hashed addresses for push; first4/last4 poison warnings; collection allow/blocklist hides spam by default |
+| Watch-only accounts | Hidden sign CTAs | Persistent shell banner + `screenChrome` guard per screen + sign-route navigation gate; all unit-tested |

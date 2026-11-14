@@ -89,8 +89,8 @@ export function allowancePlan(
 ): AllowancePlan {
   const current = BigInt(z.string().regex(/^\d+$/).parse(String(currentBaseUnits)));
   const needed = BigInt(z.string().regex(/^\d+$/).parse(String(neededBaseUnits)));
-  if (needed <= 0n) throw new Error("needed allowance must be > 0");
-  if (current >= needed) {
+  // needed == 0 (e.g. selling the native asset) -> no approval transaction at all
+  if (needed === 0n || current >= needed) {
     return AllowancePlanSchema.parse({ mode: "exact", amountBaseUnits: "0" });
   }
   if (opts?.allowInfinite === true) {

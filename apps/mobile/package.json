@@ -17,6 +17,11 @@
     "vitest": "^2.1.8"
   },
   "dependencies": {
+    "@drift/core": "workspace:^",
+    "@drift/features": "workspace:^",
+    "@drift/gateway-client": "workspace:^",
+    "@drift/keystore": "workspace:^",
+    "@drift/policy-engine": "workspace:^",
     "react": "^18.3.1",
     "react-native": "0.76.0",
     "zod": "^3.23.8",

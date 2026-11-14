@@ -15,6 +15,7 @@ pnpm -w typecheck && pnpm -w test
 
 - `SPEC.md` — locked tech stack, chain support, security design (start here)
 - `ITERATION2_PLAN.md` / `docs/ITERATION2_DOD.md` — iteration 2 scope + completion record
+- `ITERATION3_PLAN.md` / `docs/ITERATION3_DOD.md` — iteration 3: live gateway, portfolio/swap/stake/NFT/notifications, duress + spending limits, sim-enforced approvals
 - `THREAT_MODEL.md`, `SECURITY.md`, `SECURITY_TEST_EVIDENCE.md` — audit entry points
 - `RELEASE.md`, `docs/STORE_LISTING.md` — release train, rollout gates
 - `packages/signer/rust/MIGRATION_U030.md` — CIP-1852 / Taproot migration notes

@@ -82,7 +82,11 @@ describe("gateway-client T008", () => {
     // No method accepts seed-like params: assert the client surface.
     expect(Object.keys(client).sort()).toEqual([
       "broadcastAda", "broadcastBtc", "broadcastEvm", "broadcastSol",
-      "getEvmBalance", "getPhishlist", "getPrices", "subscribePush",
+      "evmRpc", "getAdaUtxos", "getBtcUtxos", "getEvmBalance", "getEvmTokenBalances",
+      "getEvmTxStatus", "getFeeEstimate", "getHealth", "getNfts", "getPhishlist",
+      "getPrices", "getPricesHistory", "getSolBalance", "getSolTokenBalances",
+      "getSolTxStatus", "getSwapQuote", "revokePush", "simulateEvm", "simulateSol",
+      "subscribePush",
     ]);
     const bodies = seen.map((s) => String(s.init?.body ?? ""));
     expect(bodies.join(" ")).not.toMatch(/mnemonic|seed|entropy/i);
@@ -94,5 +98,96 @@ describe("gateway-client T008", () => {
     const badShape = mockFetch({ "/v1/prices": { nope: 1 } }, []);
     const bad = createGatewayClient({ baseUrl: "https://gw.example", fetchFn: badShape });
     await expect(bad.getPrices(["ETH"])).rejects.toThrow();
+  });
+});
+
+describe("gateway-client iteration 3 endpoints", () => {
+  const ADDR = "0x0000000000000000000000000000000000000001";
+  const SOL = "So1111111111111111111111111111111111111111";
+  function setup() {
+    const seen: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const fetchFn = mockFetch(
+      {
+        "/v1/prices/history": { stub: false, span: "7d", series: { ETH: [{ t: 1, p: 3000 }] } },
+        "/v1/sol/balance": { lamports: "5000" },
+        "/v1/btc/utxo": { utxos: [{ txid: "aa", value: 1 }] },
+        "/v1/ada/utxo": { utxos: [{ balance: "1" }] },
+        "/v1/evm/1/rpc": { stub: false, result: "0x1" },
+        "/v1/evm/1/fee-estimate": {
+          stub: false, chainId: "eip155:1", gasLimit: "21000",
+          tiers: {
+            low: { maxFeePerGasWei: "3000000000", maxPriorityFeePerGasWei: "1000000000" },
+            med: { maxFeePerGasWei: "4000000000", maxPriorityFeePerGasWei: "2000000000" },
+            high: { maxFeePerGasWei: "5000000000", maxPriorityFeePerGasWei: "3000000000" },
+          },
+        },
+        "/v1/evm/1/tokens": { stub: false, tokens: [{ address: ADDR, symbol: "USDC", decimals: 6, balanceBaseUnits: "5000000" }] },
+        "/v1/evm/1/tx": { stub: false, status: "success", blockNumber: "16", gasUsed: "21000" },
+        "/v1/sol/tokens": { stub: false, tokens: [{ mint: SOL, tokenAccount: SOL, amountBaseUnits: "42", decimals: 9 }] },
+        "/v1/sol/tx": { stub: false, status: "success", slot: 42, err: null },
+        "/v1/swap/quote": {
+          stub: false,
+          quote: { sellToken: "native", buyToken: "USDC", sellAmountBaseUnits: "1000", buyAmountBaseUnits: "3", priceImpactPct: "0.1", allowanceNeededBaseUnits: "0" },
+        },
+        "/v1/nfts": { stub: false, items: [{ tokenId: "1", name: "Ape" }] },
+        "/healthz": { ok: true, service: "drift-gateway", version: "0.2.0", mode: "live", keysHeld: false, upstreams: {} },
+        "/v1/evm/simulate": { stub: false, diff: { balanceChanges: [{ address: ADDR, asset: "native", before: "1000", after: "0" }] } },
+        "/v1/sol/simulate": { stub: true, diff: null },
+        "/v1/push/revoke": { ok: true },
+      },
+      seen,
+    );
+    const client = createGatewayClient({ baseUrl: "https://gw.example", fetchFn });
+    return { client, seen };
+  }
+
+  it("reads: balances, utxos, prices history, health", async () => {
+    const { client } = setup();
+    expect(await client.getSolBalance(SOL)).toBe(5000n);
+    expect((await client.getBtcUtxos("bc1qxyz")).length).toBe(1);
+    expect((await client.getAdaUtxos("addr1x")).length).toBe(1);
+    const hist = await client.getPricesHistory(["ETH"], "7d");
+    expect(hist.series.ETH).toEqual([{ t: 1, p: 3000 }]);
+    const h = await client.getHealth();
+    expect(h).toMatchObject({ ok: true, mode: "live", keysHeld: false });
+  });
+
+  it("evmRpc passthrough + fee estimate with bigint tiers", async () => {
+    const { client, seen } = setup();
+    const r = await client.evmRpc<string>(1, "eth_chainId", []);
+    expect(r).toEqual({ stub: false, result: "0x1" });
+    expect(seen[0]?.url).toContain("/v1/evm/1/rpc");
+    const fee = await client.getFeeEstimate(1, { from: ADDR, to: ADDR, value: "1000" });
+    expect(fee.gasLimit).toBe(21000n);
+    expect(fee.tiers.low.maxFeePerGasWei).toBe(3_000_000_000n);
+    expect(fee.tiers.high.maxPriorityFeePerGasWei).toBe(3_000_000_000n);
+    await expect(client.evmRpc(1, "eth_sendRawTransaction", ["0x00"])).resolves.toBeDefined; // validation happens server-side
+  });
+
+  it("token balances + tx statuses convert to bigint", async () => {
+    const { client } = setup();
+    const tb = await client.getEvmTokenBalances(1, ADDR);
+    expect(tb.tokens[0]).toMatchObject({ symbol: "USDC", balanceBaseUnits: 5_000_000n });
+    const tx = await client.getEvmTxStatus(1, `0x${"ab".repeat(32)}`);
+    expect(tx).toMatchObject({ status: "success", blockNumber: 16n, gasUsed: 21000n });
+    const st = await client.getSolTokenBalances(SOL);
+    expect(st.tokens[0]?.amountBaseUnits).toBe(42n);
+    const stx = await client.getSolTxStatus("s".repeat(80));
+    expect(stx).toMatchObject({ status: "success", slot: 42 });
+  });
+
+  it("swap quote + nfts + simulate + revokePush", async () => {
+    const { client } = setup();
+    const q = await client.getSwapQuote({ chain: "eip155:1", sellToken: "native", buyToken: "USDC", sellAmountBaseUnits: "1000", slippageBps: 50 });
+    expect(q.quote).toMatchObject({ buyAmountBaseUnits: 3n, allowanceNeededBaseUnits: 0n });
+    await expect(client.getSwapQuote({ chain: "eip155:1", sellToken: "a", buyToken: "b", sellAmountBaseUnits: "x", slippageBps: 50 })).rejects.toThrow();
+    const n = await client.getNfts("eip155:1", ADDR);
+    expect(n.items[0]?.tokenId).toBe("1");
+    const sim = await client.simulateEvm({ chainId: "eip155:1", from: ADDR, to: ADDR, valueWei: "1000" });
+    expect(sim.diff?.balanceChanges[0]?.after).toBe(0n);
+    const simStub = await client.simulateSol({ messageBase64: "aGVsbG8=" });
+    expect(simStub).toMatchObject({ stub: true, diff: null });
+    await expect(client.revokePush("zz")).rejects.toThrow();
+    expect(await client.revokePush("ab".repeat(32))).toEqual({ ok: true });
   });
 });

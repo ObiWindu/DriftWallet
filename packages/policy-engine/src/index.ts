@@ -20,10 +20,15 @@ export interface Verdict { verdict: "allow" | "warn" | "block"; findings: Findin
 
 const PHISH = ["evil-drain.example", "wallet-verify-seed.example", "airdrop-claim-free.example"];
 
-export function isPhishingDomain(origin: string): boolean {
+/**
+ * Phishing check against the built-in list PLUS an injected dynamic list
+ * (gateway /v1/phishlist). Unparsable origin always blocks.
+ */
+export function isPhishingDomain(origin: string, extraDomains: string[] = []): boolean {
   try {
     const host = new URL(origin).hostname.toLowerCase();
-    if (PHISH.some((d) => host === d || host.endsWith(`.${d}`))) return true;
+    const all = [...PHISH, ...z.array(z.string()).parse(extraDomains).map((d) => d.toLowerCase())];
+    if (all.some((d) => host === d || host.endsWith(`.${d}`))) return true;
     // homograph-ish: punycode xn-- or excessive hyphens mimicking brands
     if (host.startsWith("xn--")) return true;
     return false;
@@ -142,17 +147,126 @@ export function compareSimulation(
   return null;
 }
 
+// ---- Iteration 3: spending limits, EIP-712 domain match, extra selectors ----
+
+/**
+ * Per-session spending-limit check. `spent` + `amount` must stay <= limit.
+ * Returns a block finding when the tx would exceed the limit, a warn finding
+ * when it lands within the last 20% of the budget.
+ */
+export function checkSpendingLimit(
+  spentBaseUnits: string,
+  amountBaseUnits: string,
+  limitBaseUnits: string,
+): Finding | null {
+  const UintStr = z.string().regex(/^\d+$/);
+  const spent = BigInt(UintStr.parse(spentBaseUnits));
+  const amount = BigInt(UintStr.parse(amountBaseUnits));
+  const limit = BigInt(UintStr.parse(limitBaseUnits));
+  if (limit <= 0n) return null; // no limit configured
+  if (spent + amount > limit) {
+    return {
+      severity: "block",
+      code: "SPEND_LIMIT_EXCEEDED",
+      message: `session spend ${spent + amount} would exceed limit ${limit} base units`,
+    };
+  }
+  if (spent + amount >= (limit * 80n) / 100n) {
+    return {
+      severity: "warn",
+      code: "SPEND_LIMIT_NEAR",
+      message: `session spend is at >=80% of the ${limit} base-unit limit`,
+    };
+  }
+  return null;
+}
+
+export interface TypedDataDomain {
+  name?: string | undefined;
+  version?: string | undefined;
+  chainId?: number | undefined;
+  verifyingContract?: string | undefined;
+}
+
+/**
+ * EIP-712 domain sanity: when the typed data names a project, the origin host
+ * should plausibly match it (normalized). Mismatch -> warn (not block: some
+ * legit contracts sign with a different brand name). A verifyingContract on
+ * the phish list -> block via the normal origin check.
+ */
+export function checkEip712Domain(domain: TypedDataDomain, origin: string): Finding | null {
+  z.object({
+    name: z.string().optional(),
+    version: z.string().optional(),
+    chainId: z.number().optional(),
+    verifyingContract: z.string().optional(),
+  }).parse(domain);
+  const host = (() => {
+    try {
+      return new URL(origin).hostname.toLowerCase();
+    } catch {
+      return "";
+    }
+  })();
+  const name = (domain.name ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (name.length >= 3 && host.length > 0 && !host.includes(name)) {
+    return {
+      severity: "warn",
+      code: "EIP712_DOMAIN_MISMATCH",
+      message: `typed-data domain "${domain.name}" does not match origin host — possible phishing signature`,
+    };
+  }
+  return null;
+}
+
+// keccak selectors for dangerous approval methods
+const SELECTOR_SET_APPROVAL_FOR_ALL = "0xa22cb465"; // setApprovalForAll(address,bool)
+const SELECTOR_PERMIT = "0xd505accf"; // permit(address,address,uint256,uint8,bytes32,bytes32)
+
+/** Extra dangerous-selector scan beyond ERC-20 approve. */
+export function checkDangerousSelector(dataHex: string | undefined): Finding | null {
+  if (!dataHex) return null;
+  const d = dataHex.toLowerCase();
+  if (d.startsWith(SELECTOR_SET_APPROVAL_FOR_ALL)) {
+    const approved = d.slice(-64);
+    if (approved === (1n).toString(16).padStart(64, "0")) {
+      return {
+        severity: "warn",
+        code: "NFT_APPROVAL_ALL",
+        message: "setApprovalForAll(true) grants an operator control of ALL your NFTs — prefer per-token approval",
+      };
+    }
+  }
+  if (d.startsWith(SELECTOR_PERMIT)) {
+    // permit value is the 3rd 32-byte word
+    const valueWord = d.slice(2 + 8 + 64 * 2, 2 + 8 + 64 * 3);
+    if (valueWord === MAX_UINT256.toString(16).padStart(64, "0")) {
+      return {
+        severity: "warn",
+        code: "PERMIT_INFINITE",
+        message: "permit with max value — unlimited token spend for the spender",
+      };
+    }
+  }
+  return null;
+}
+
 export interface EvaluateCtx {
   history?: string[];
   feeFiatUsd?: number;
   claimed?: BalanceDiff[];
   simulated?: BalanceDiff[] | null;
   tolerance?: bigint;
+  /** Iteration 3 additions (all optional; absence preserves old verdicts). */
+  phishDomains?: string[];
+  spentBaseUnits?: string;
+  spendLimitBaseUnits?: string;
+  typedDataDomain?: TypedDataDomain;
 }
 
 export async function evaluate(intent: Intent, ctx: EvaluateCtx = {}): Promise<Verdict> {
   const findings: Finding[] = [];
-  if (isPhishingDomain(intent.origin)) {
+  if (isPhishingDomain(intent.origin, ctx.phishDomains ?? [])) {
     findings.push({ severity: "block", code: "PHISH_DOMAIN", message: `blocked phishing origin ${intent.origin}` });
     return { verdict: "block", findings };
   }
@@ -166,6 +280,22 @@ export async function evaluate(intent: Intent, ctx: EvaluateCtx = {}): Promise<V
     const amtHex = intent.dataHex.slice(-64);
     if (amtHex.toLowerCase() === MAX_UINT256.toString(16).padStart(64, "0")) {
       findings.push({ severity: "warn", code: "INFINITE_ALLOWANCE", message: "infinite approval — suggest exact amount" });
+    }
+  }
+  // iteration 3: other dangerous selectors (setApprovalForAll, permit)
+  const selFinding = checkDangerousSelector(intent.dataHex);
+  if (selFinding) findings.push(selFinding);
+  // iteration 3: EIP-712 domain vs origin
+  if (ctx.typedDataDomain) {
+    const domFinding = checkEip712Domain(ctx.typedDataDomain, intent.origin);
+    if (domFinding) findings.push(domFinding);
+  }
+  // iteration 3: per-session spending limit
+  if (ctx.spendLimitBaseUnits !== undefined && ctx.spentBaseUnits !== undefined) {
+    const limitFinding = checkSpendingLimit(ctx.spentBaseUnits, intent.amountBaseUnits, ctx.spendLimitBaseUnits);
+    if (limitFinding) {
+      findings.push(limitFinding);
+      if (limitFinding.severity === "block") return { verdict: "block", findings };
     }
   }
   // address-poison (only when history supplied; preserves old verdicts otherwise)

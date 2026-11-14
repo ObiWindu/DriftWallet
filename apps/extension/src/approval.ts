@@ -291,6 +291,80 @@ export function shouldAutoReject(map: unknown, origin: string): boolean {
   return getOriginPolicy(map, origin) === "auto-reject";
 }
 
+// ---- Iteration 3: policy-engine-backed decision (F-P0-3 enforcement) ----
+// Runs the real policy engine (phishing, poison, fee, allowance, spending
+// limits, EIP-712 domain, simulation mismatch) and maps the verdict onto the
+// approval queue's PolicyVerdict. The background SW calls this before
+// dispatching to the offscreen signer; a "deny"/"block" can never be approved.
+
+import {
+  evaluate,
+  type BalanceDiff as PEBalanceDiff,
+  type EvaluateCtx,
+  type Finding,
+  type Intent,
+  type TypedDataDomain,
+} from "@drift/policy-engine";
+
+export interface PolicyDecisionInput {
+  intent: Intent;
+  ctx?: Omit<EvaluateCtx, "claimed" | "simulated"> & {
+    claimed?: PEBalanceDiff[];
+    simulated?: PEBalanceDiff[] | null;
+  };
+}
+
+export interface PolicyDecision {
+  verdict: PolicyVerdict;
+  reason: string;
+  findings: Finding[];
+}
+
+export async function decideWithPolicy(input: PolicyDecisionInput): Promise<PolicyDecision> {
+  const { verdict, findings } = await evaluate(input.intent, input.ctx ?? {});
+  const blocks = findings.filter((f) => f.severity === "block");
+  const warns = findings.filter((f) => f.severity === "warn");
+  if (verdict === "block" || blocks.length > 0) {
+    return {
+      verdict: "deny",
+      reason: blocks[0]?.message ?? "policy block",
+      findings,
+    };
+  }
+  if (verdict === "warn" || warns.length > 0) {
+    return {
+      verdict: "stepUp",
+      reason: warns[0]?.message ?? "policy warning — step-up required",
+      findings,
+    };
+  }
+  return { verdict: "allow", reason: "policy allow", findings };
+}
+
+/** Convert a policy-engine verdict into an ApprovalRequest verdict + reason. */
+export function approvalFromPolicy(decision: PolicyDecision): Pick<ApprovalRequest, "verdict" | "verdictReason"> {
+  return { verdict: decision.verdict, verdictReason: decision.reason };
+}
+
+/** Typed-data domain extractor for EIP-712 requests (display + policy). */
+export function typedDataDomainOf(params: unknown): TypedDataDomain | undefined {
+  try {
+    const p = z.object({ domain: z.record(z.string(), z.unknown()).optional() }).parse(
+      Array.isArray(params) ? { domain: (params[1] as { domain?: Record<string, unknown> } | undefined)?.domain } : params,
+    );
+    const d = p.domain;
+    if (!d) return undefined;
+    return {
+      name: typeof d["name"] === "string" ? d["name"] : undefined,
+      version: typeof d["version"] === "string" ? d["version"] : undefined,
+      chainId: typeof d["chainId"] === "number" ? d["chainId"] : undefined,
+      verifyingContract: typeof d["verifyingContract"] === "string" ? d["verifyingContract"] : undefined,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 // ---- WebAuthn-gated approve stub (interface + memory impl, no credentials) ----
 
 /**

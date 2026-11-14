@@ -15,6 +15,11 @@ export const ROUTES = [
   "Send",
   "Activity",
   "Settings",
+  // Iteration 3 feature routes
+  "Swap",
+  "Stake",
+  "Nfts",
+  "Security",
 ] as const;
 
 export type RouteName = (typeof ROUTES)[number];
@@ -37,7 +42,20 @@ export const ROUTE_DEFS: Record<RouteName, RouteDef> = {
   Send: { name: "Send", requiresAuth: true, seedVisible: false },
   Activity: { name: "Activity", requiresAuth: true, seedVisible: false },
   Settings: { name: "Settings", requiresAuth: true, seedVisible: false },
+  Swap: { name: "Swap", requiresAuth: true, seedVisible: false },
+  Stake: { name: "Stake", requiresAuth: true, seedVisible: false },
+  Nfts: { name: "Nfts", requiresAuth: true, seedVisible: false },
+  Security: { name: "Security", requiresAuth: true, seedVisible: false },
 };
+
+/** Iteration 3: sign-capable routes that a watch-only account must never reach. */
+export const SIGN_ROUTES: ReadonlySet<RouteName> = new Set(["Send", "Swap", "Stake"]);
+
+/** Watch-only navigation gate: sign routes bounce back to Home. */
+export function canVisitWatchOnly(route: RouteName, authenticated: boolean, watchOnly: boolean): boolean {
+  if (watchOnly && SIGN_ROUTES.has(route)) return false;
+  return canVisit(route, authenticated);
+}
 
 export function initialRoute(hasWallet: boolean): RouteName {
   return hasWallet ? "Password" : "Onboarding";

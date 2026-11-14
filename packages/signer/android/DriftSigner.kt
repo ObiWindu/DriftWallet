@@ -4,72 +4,116 @@
 package com.drift.signer
 
 import com.facebook.react.bridge.*
+import org.json.JSONObject
 
-// TurboModule stub over the Rust core C ABI (see rust/src/ffi.rs).
+// TurboModule over the Rust core C ABI (see rust/src/ffi.rs, rust/src/ffi_jni.rs).
 //
 // Session model: Rust owns an in-memory session table keyed by opaque u64
-// handles. Android holds ONLY the handle (Long) plus the encrypted vault
+// handles. Android holds ONLY the handle (Double) plus the encrypted vault
 // blob in EncryptedSharedPreferences / Keystore. The raw seed never crosses
 // JNI as a return value — helpers that would leak it are intentionally absent
 // from the C ABI. On lock(), the native session is zeroized and dropped; the
-// Kotlin-side handle is cleared and any char[] password buffers are filled
-// with 0 before release.
+// Kotlin-side handle is cleared and password strings are not retained.
 class DriftSignerModule(reactContext: ReactApplicationContext) :
   ReactContextBaseJavaModule(reactContext) {
 
-  override fun getName() = "DriftSigner"
-
-  // Loads libdrift_signer.so (built from packages/signer/rust via cargo-ndk).
-  private external fun driftCapabilities(): String
-  private external fun driftCall(method: String, requestJson: String): String
+  override fun getName() = NAME
 
   companion object {
+    const val NAME = "DriftSigner"
+
     init {
       System.loadLibrary("drift_signer")
     }
   }
 
-  private fun sessionsFromPrefs(): String {
-    // Vault blobs live in EncryptedSharedPreferences backed by Android Keystore.
-    // Handles are process-local only and are never persisted.
-    return ""
+  // JNI symbols provided by rust/src/ffi_jni.rs (libdrift_signer.so built via
+  // cargo-ndk). Both take/return JSON strings; errors come back as {"error":...}.
+  private external fun driftCapabilities(): String
+  private external fun driftCall(method: String, requestJson: String): String
+
+  /** Invoke a signer method; throws SignerException with the Rust error message. */
+  private fun call(method: String, request: JSONObject): JSONObject {
+    val response = JSONObject(driftCall(method, request.toString()))
+    if (response.has("error")) {
+      throw SignerException(method, response.getString("error"))
+    }
+    return response
   }
 
-  @ReactMethod
-  fun generateMnemonic(strengthBits: Int, promise: Promise) {
+  private class SignerException(val method: String, message: String) : Exception("$method: $message")
+
+  private fun <T> Promise.safe(body: () -> T) {
     try {
-      promise.resolve(driftCall("generate_mnemonic", "{\"strengthBits\":$strengthBits}"))
+      resolve(body())
     } catch (e: Exception) {
-      promise.reject("E_SIGNER", e.message, e)
+      reject("E_SIGNER", e.message, e)
     }
   }
 
   @ReactMethod
-  fun unlockVault(vaultJson: String, password: String, promise: Promise) {
-    // NOTE: take password as char[] in production and zeroize after use.
-    try {
-      promise.resolve(driftCall("unlock_vault", vaultJson))
-    } catch (e: Exception) {
-      promise.reject("E_UNLOCK", e.message, e)
-    }
+  fun capabilities(promise: Promise) = promise.safe { driftCapabilities() }
+
+  @ReactMethod
+  fun generateMnemonic(strengthBits: Int, promise: Promise) = promise.safe {
+    call("generate_mnemonic", JSONObject().put("strengthBits", strengthBits)).getString("mnemonic")
   }
 
   @ReactMethod
-  fun lock(sessionId: Double, promise: Promise) {
-    try {
-      promise.resolve(driftCall("lock", "{\"sessionId\":${sessionId.toLong()}}"))
-      // Zeroize: session dropped inside Rust; clear any cached handle here.
-    } catch (e: Exception) {
-      promise.reject("E_LOCK", e.message, e)
-    }
+  fun validateMnemonic(phrase: String, promise: Promise) = promise.safe {
+    call("validate_mnemonic", JSONObject().put("phrase", phrase)).getBoolean("valid")
   }
 
   @ReactMethod
-  fun capabilities(promise: Promise) {
-    try {
-      promise.resolve(driftCapabilities())
-    } catch (e: Exception) {
-      promise.reject("E_SIGNER", e.message, e)
-    }
+  fun entropyToVault(phrase: String, password: String, lightKdf: Boolean, promise: Promise) = promise.safe {
+    call(
+      "entropy_to_vault",
+      JSONObject().put("phrase", phrase).put("password", password).put("lightKdf", lightKdf),
+    )
+  }
+
+  @ReactMethod
+  fun unlockVault(vaultJson: String, password: String, promise: Promise) = promise.safe {
+    // vaultJson is the serialized EncryptedVault object; password is wrapped in
+    // the same request envelope the Rust ABI expects — never sent alone.
+    val req = JSONObject()
+      .put("vault", JSONObject(vaultJson))
+      .put("password", password)
+    call("unlock_vault", req).getDouble("sessionId")
+  }
+
+  @ReactMethod
+  fun lock(sessionId: Double, promise: Promise) = promise.safe {
+    call("lock", JSONObject().put("sessionId", sessionId.toLong()))
+    // Session zeroized inside Rust; nothing to retain here.
+    true
+  }
+
+  @ReactMethod
+  fun derivePubkey(sessionId: Double, path: String, curve: String, promise: Promise) = promise.safe {
+    call(
+      "derive_pubkey",
+      JSONObject().put("sessionId", sessionId.toLong()).put("path", path).put("curve", curve),
+    )
+  }
+
+  @ReactMethod
+  fun signEvm(sessionId: Double, reqJson: String, promise: Promise) = promise.safe {
+    call("sign_evm", JSONObject(reqJson).put("sessionId", sessionId.toLong()))
+  }
+
+  @ReactMethod
+  fun signSolana(sessionId: Double, reqJson: String, promise: Promise) = promise.safe {
+    call("sign_solana", JSONObject(reqJson).put("sessionId", sessionId.toLong()))
+  }
+
+  @ReactMethod
+  fun signBitcoin(sessionId: Double, reqJson: String, promise: Promise) = promise.safe {
+    call("sign_bitcoin", JSONObject(reqJson).put("sessionId", sessionId.toLong()))
+  }
+
+  @ReactMethod
+  fun signCardano(sessionId: Double, reqJson: String, promise: Promise) = promise.safe {
+    call("sign_cardano", JSONObject(reqJson).put("sessionId", sessionId.toLong()))
   }
 }

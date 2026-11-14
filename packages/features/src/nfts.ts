@@ -213,3 +213,89 @@ export function buildSplNftTransfer(
   });
   return { transfer, dish };
 }
+
+// ---------------------------------------------------------------------------
+// Iteration 3 (F-P2-4): collection allowlist/blocklist + spam scoring.
+// Spam/airdropped NFTs are hidden by default; the user can explicitly reveal
+// them per collection. Visibility decisions are pure + testable.
+// ---------------------------------------------------------------------------
+
+export const CollectionFilterSchema = z.object({
+  /** When non-empty, ONLY these collection ids/contracts are visible by default. */
+  allowlist: z.array(z.string()).default([]),
+  /** These collection ids/contracts are always hidden unless explicitly revealed. */
+  blocklist: z.array(z.string()).default([]),
+});
+export type CollectionFilter = z.infer<typeof CollectionFilterSchema>;
+
+export const NftVisibilitySchema = z.object({
+  visible: z.boolean(),
+  reasons: z.array(z.string()),
+});
+export type NftVisibility = z.infer<typeof NftVisibilitySchema>;
+
+function collectionKey(asset: NftAsset): string {
+  return (asset.collectionId ?? asset.contract).toLowerCase();
+}
+
+export class NftCollectionFilter {
+  private allow: Set<string>;
+  private block: Set<string>;
+  /** Collections the user explicitly revealed despite spam/blocklist. */
+  private revealed = new Set<string>();
+
+  constructor(filter: CollectionFilter) {
+    const f = CollectionFilterSchema.parse(filter);
+    this.allow = new Set(f.allowlist.map((s) => s.toLowerCase()));
+    this.block = new Set(f.blocklist.map((s) => s.toLowerCase()));
+  }
+
+  reveal(collectionIdOrContract: string): void {
+    this.revealed.add(collectionIdOrContract.toLowerCase());
+  }
+
+  hide(collectionIdOrContract: string): void {
+    this.revealed.delete(collectionIdOrContract.toLowerCase());
+  }
+
+  /** Decide visibility of one asset. Spam assets are hidden unless revealed. */
+  isVisible(asset: NftAsset): NftVisibility {
+    NftAssetSchema.parse(asset);
+    const key = collectionKey(asset);
+    const reasons: string[] = [];
+    if (this.block.has(key)) reasons.push("collection is blocklisted");
+    if (this.allow.size > 0 && !this.allow.has(key)) reasons.push("collection not in allowlist");
+    const spam = isSpamNft(asset);
+    if (spam.spam) reasons.push(...spam.reasons);
+    if (reasons.length > 0 && !this.revealed.has(key)) {
+      return NftVisibilitySchema.parse({ visible: false, reasons });
+    }
+    return NftVisibilitySchema.parse({ visible: true, reasons });
+  }
+
+  /** Split a gallery into visible + hidden (with reasons). */
+  filterAll(assets: NftAsset[]): { visible: NftAsset[]; hidden: { asset: NftAsset; reasons: string[] }[] } {
+    const list = z.array(NftAssetSchema).parse(assets);
+    const visible: NftAsset[] = [];
+    const hidden: { asset: NftAsset; reasons: string[] }[] = [];
+    for (const a of list) {
+      const v = this.isVisible(a);
+      if (v.visible) visible.push(a);
+      else hidden.push({ asset: a, reasons: v.reasons });
+    }
+    return { visible, hidden };
+  }
+
+  exportJSON(): string {
+    return JSON.stringify({
+      allowlist: [...this.allow],
+      blocklist: [...this.block],
+      revealed: [...this.revealed],
+    });
+  }
+}
+
+/** Numeric spam score (0 = clean, higher = more suspicious) for sorting/filtering. */
+export function spamScore(asset: NftAsset): number {
+  return isSpamNft(asset).reasons.length;
+}

@@ -13,6 +13,8 @@ pub mod cardano;
 pub mod derive;
 pub mod evm;
 pub mod ffi;
+#[cfg(target_os = "android")]
+mod ffi_jni;
 pub mod mnemonic;
 pub mod solana;
 pub mod vault;
@@ -20,7 +22,7 @@ pub mod wasm_bind;
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use zeroize::Zeroizing;
 
 use thiserror::Error;
@@ -62,7 +64,22 @@ fn next_id() -> &'static Mutex<u64> {
 struct Session {
     seed: Zeroizing<Vec<u8>>, // 64-byte BIP39 seed
     entropy: Option<Zeroizing<Vec<u8>>>, // BIP39 entropy (v2 vaults) for CIP-1852
-    last_used: Instant,
+    last_used_ms: u64,
+}
+
+// std::time::Instant/SystemTime panic on wasm32-unknown-unknown, so the
+// session clock reads wall time through js-sys there.
+#[cfg(target_arch = "wasm32")]
+fn now_ms() -> u64 {
+    js_sys::Date::now() as u64
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 const SESSION_TTL: Duration = Duration::from_secs(5 * 60);
@@ -71,11 +88,11 @@ fn with_session<T>(handle: u64, f: impl FnOnce(&mut Session) -> Result<T, Signer
     let map = sessions();
     let mut guard = map.lock().map_err(|_| SignerError::CryptoFailure)?;
     let sess = guard.get_mut(&handle).ok_or(SignerError::BadSession)?;
-    if sess.last_used.elapsed() > SESSION_TTL {
+    if Duration::from_millis(now_ms().saturating_sub(sess.last_used_ms)) > SESSION_TTL {
         guard.remove(&handle);
         return Err(SignerError::BadSession);
     }
-    sess.last_used = Instant::now();
+    sess.last_used_ms = now_ms();
     f(sess)
 }
 
@@ -149,7 +166,7 @@ pub fn unlock_vault(vault: &EncryptedVault, password: &[u8]) -> Result<SessionHa
         Session {
             seed: Zeroizing::new(secrets.seed),
             entropy: secrets.entropy.map(Zeroizing::new),
-            last_used: Instant::now(),
+            last_used_ms: now_ms(),
         },
     );
     Ok(id)

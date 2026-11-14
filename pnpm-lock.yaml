@@ -26,6 +26,18 @@ importers:
 
   apps/extension:
     dependencies:
+      '@drift/core':
+        specifier: workspace:^
+        version: link:../../packages/core
+      '@drift/features':
+        specifier: workspace:^
+        version: link:../../packages/features
+      '@drift/gateway-client':
+        specifier: workspace:^
+        version: link:../../packages/gateway-client
+      '@drift/policy-engine':
+        specifier: workspace:^
+        version: link:../../packages/policy-engine
       i18next:
         specifier: ^26.5.11
         version: 26.5.11(typescript@5.9.3)
@@ -57,6 +69,21 @@ importers:
 
   apps/mobile:
     dependencies:
+      '@drift/core':
+        specifier: workspace:^
+        version: link:../../packages/core
+      '@drift/features':
+        specifier: workspace:^
+        version: link:../../packages/features
+      '@drift/gateway-client':
+        specifier: workspace:^
+        version: link:../../packages/gateway-client
+      '@drift/keystore':
+        specifier: workspace:^
+        version: link:../../packages/keystore
+      '@drift/policy-engine':
+        specifier: workspace:^
+        version: link:../../packages/policy-engine
       react:
         specifier: ^18.3.1
         version: 18.3.1
@@ -212,9 +239,15 @@ importers:
       '@ledgerhq/hw-app-eth':
         specifier: ^7.11.1
         version: 7.11.1(react@18.3.1)
+      '@ledgerhq/hw-app-solana':
+        specifier: ^7.0.0
+        version: 7.13.0
       '@ledgerhq/hw-transport':
         specifier: ^6.36.1
         version: 6.36.1
+      '@ledgerhq/hw-transport-webusb':
+        specifier: ^6.30.0
+        version: 6.35.0
       zod:
         specifier: ^3.23.8
         version: 3.25.76
@@ -1651,6 +1684,9 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
+  '@ledgerhq/devices@8.16.0':
+    resolution: {integrity: sha512-brXLPzkvGM3D5YNsWQ25P5G4SmWdSNBed9W8wKoOIRLGdRfvE+bg9mzFty0iZ+aRLBkLoXwX7xKIL9zUi6LBKQ==}
+
   '@ledgerhq/devices@8.18.0':
     resolution: {integrity: sha512-90qS23wtqdviis+8pDWRbgyp4jE4YLK24CyAmH79rLySaPbgEJX5mZzbEKlDQ6cXvSA/51Z2/PtzmlAi26rzug==}
 
@@ -1661,6 +1697,10 @@ packages:
     resolution: {integrity: sha512-YaoZpBuHSiOKkuRwedjHpTYSWUcMjoIsIdfO1DQ5jEZ9piAM+cpZzTHVK15PT2tAzTy4GyaJi2WjjAnp8H8k5A==}
     peerDependencies:
       react: ^18.0.0 || ^19.0.0
+
+  '@ledgerhq/errors@6.37.0':
+    resolution: {integrity: sha512-T5yiKI5UX7ugeocdTF3TUsCIN2BH41Bio4ZeN410YFjFOf3es08n/5JyMzzKwzRgP0blG3HfBf7s7vJKqCSAeg==}
+    deprecated: This package is no longer maintained and will not receive updates. Published versions remain available.
 
   '@ledgerhq/evm-tools@2.0.0':
     resolution: {integrity: sha512-wkZQxYduOFNwnNloZQ35Dk8oKBVQ1ajNX09wazEVeLxzfWTDMvZwWWtaKK0WUdX53/OX4l2wr/5vaNCJs+IYow==}
@@ -1673,8 +1713,18 @@ packages:
       react:
         optional: true
 
+  '@ledgerhq/hw-app-solana@7.13.0':
+    resolution: {integrity: sha512-J5af5XRtAVStk8srRZHK4XayV9S9AJ7dkc354fj6NmSTtXP8Cjk831pUcMRvHENsMTkCiwIJK1bJjrzPNjMDJQ==}
+
   '@ledgerhq/hw-transport-mocker@6.35.0':
     resolution: {integrity: sha512-ib6CKTYh+fbwahgAuKUrVvl9zHSf9rfLcnalcWQvlY9A4NQ4dkz0P+QlLaR8GeHVNPg29nhzpCQN7+hRlzSU+g==}
+
+  '@ledgerhq/hw-transport-webusb@6.35.0':
+    resolution: {integrity: sha512-8fBNqzQnyR3pKLE2AVxCAc54nHMEKz9/eAYLDENVRuDp+A23lBJYWErxSyoZ6riCM19jIhRvtHjB0o4PXpa2tg==}
+    deprecated: This package is no longer maintained. Use @ledgerhq/device-transport-kit-web-hid instead.
+
+  '@ledgerhq/hw-transport@6.35.5':
+    resolution: {integrity: sha512-P4+wtLewLWgxPtIb90h5kjpzXVlC6f4IBQBmvowVFkInvZt34ffXkX7wa5KfMzu4l3cqCcpNSqtPSCMp+0vuqg==}
 
   '@ledgerhq/hw-transport@6.36.0':
     resolution: {integrity: sha512-fU1rNnn6TgI9CrtynakAkhH09Tu4fTS5QEukO+71n0C5bFBL2Mee5WMQsuGaXBB8Ana3iJwbqZnm+0msssmY3g==}
@@ -2704,6 +2754,9 @@ packages:
   bip174@3.0.1:
     resolution: {integrity: sha512-avOnOoLOwdjw1MebWKh3bHqWOH558Q9VpqmRKUv2S63vjw0pnX7Y+yRihxIibgP55twhc7+YfC0IAH43IF5FqQ==}
     engines: {node: '>=18.0.0'}
+
+  bip32-path@0.4.2:
+    resolution: {integrity: sha512-ZBMCELjJfcNMkz5bDuJ1WrYvjlhEF5k6mQ8vUr4N7MbVRsXei7ZOg8VhhwMfNiW68NWmLkgkc6WvTickrLGprQ==}
 
   bip39@3.1.0:
     resolution: {integrity: sha512-c9kiwdk45Do5GL0vJMe7tS95VjCii65mYAH7DfWl3uW8AVzXKQVUm64i3hzVybBDMp9r7j9iNxR85+ul8MdN/A==}
@@ -6349,6 +6402,10 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.6.0
 
+  '@ledgerhq/devices@8.16.0':
+    dependencies:
+      semver: 7.7.3
+
   '@ledgerhq/devices@8.18.0':
     dependencies:
       semver: 7.7.3
@@ -6366,6 +6423,8 @@ snapshots:
     transitivePeerDependencies:
       - debug
       - supports-color
+
+  '@ledgerhq/errors@6.37.0': {}
 
   '@ledgerhq/evm-tools@2.0.0':
     dependencies:
@@ -6398,12 +6457,31 @@ snapshots:
       - debug
       - supports-color
 
+  '@ledgerhq/hw-app-solana@7.13.0':
+    dependencies:
+      '@ledgerhq/hw-transport': 6.36.1
+      bip32-path: 0.4.2
+
   '@ledgerhq/hw-transport-mocker@6.35.0':
     dependencies:
       '@ledgerhq/hw-transport': 6.36.0
       '@ledgerhq/logs': 6.19.0
       events: 3.3.0
       rxjs: 7.8.2
+
+  '@ledgerhq/hw-transport-webusb@6.35.0':
+    dependencies:
+      '@ledgerhq/devices': 8.16.0
+      '@ledgerhq/errors': 6.37.0
+      '@ledgerhq/hw-transport': 6.35.5
+      '@ledgerhq/logs': 6.19.0
+
+  '@ledgerhq/hw-transport@6.35.5':
+    dependencies:
+      '@ledgerhq/devices': 8.16.0
+      '@ledgerhq/errors': 6.37.0
+      '@ledgerhq/logs': 6.19.0
+      events: 3.3.0
 
   '@ledgerhq/hw-transport@6.36.0':
     dependencies:
@@ -7767,6 +7845,8 @@ snapshots:
     dependencies:
       uint8array-tools: 0.0.10
       varuint-bitcoin: 2.0.1
+
+  bip32-path@0.4.2: {}
 
   bip39@3.1.0:
     dependencies:

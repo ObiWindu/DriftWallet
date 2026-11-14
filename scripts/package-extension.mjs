@@ -65,6 +65,26 @@ try {
   process.exit(1);
 }
 
+// Signer WASM gate: once wasm.SHA256 records a real digest (not PENDING-WASM),
+// the offscreen document's dist/wasm-pkg/drift_signer_bg.wasm must exist and
+// match it — refuse to ship an extension whose signer 404s at runtime.
+const stagedWasm = path.join(EXT, "dist", "wasm-pkg", "drift_signer_bg.wasm");
+const shaFile = path.join(ROOT, "packages", "signer", "ts", "wasm.SHA256");
+const recorded = fs.existsSync(shaFile) ? fs.readFileSync(shaFile, "utf8").trim().split(/\s+/)[0] : null;
+if (recorded && recorded !== "PENDING-WASM") {
+  if (!fs.existsSync(stagedWasm)) {
+    console.error("package-extension: dist/wasm-pkg/drift_signer_bg.wasm missing — build the signer WASM first (wasm-pack, see packages/signer/ts/wasm.README.md) and run the extension build");
+    process.exit(1);
+  }
+  const actual = sha256File(stagedWasm);
+  if (recorded !== actual) {
+    console.error(`package-extension: wasm digest mismatch (expected ${recorded}, got ${actual}) — re-record with \`node scripts/repro.mjs record\``);
+    process.exit(1);
+  }
+} else {
+  console.warn("package-extension: wasm.SHA256 is PENDING-WASM — packaging without a pinned signer artifact (dev build only)");
+}
+
 // Zip each target (use system zip; no npm dep, offline-safe).
 const sums = [];
 for (const t of TARGETS) {

@@ -612,6 +612,35 @@ pub extern "C" fn drift_sign_cardano(req: *const c_char) -> *const c_char {
 }
 
 // ---------------------------------------------------------------------------
+// generic dispatcher
+// ---------------------------------------------------------------------------
+
+/// `drift_call(method, req)` routes a method name to the matching `drift_*`
+/// export. Hosts (Android JNI glue, iOS C interop, foreign callers) only need
+/// this symbol plus [`drift_capabilities`]. Caller frees the result with
+/// [`drift_free`].
+#[no_mangle]
+pub extern "C" fn drift_call(method: *const c_char, req: *const c_char) -> *const c_char {
+    let m = match read_cstr(method) {
+        Ok(v) => v,
+        Err(e) => return err_json(e),
+    };
+    match m.as_str() {
+        "generate_mnemonic" => drift_generate_mnemonic(req),
+        "validate_mnemonic" => drift_validate_mnemonic(req),
+        "entropy_to_vault" => drift_entropy_to_vault(req),
+        "unlock_vault" => drift_unlock_vault(req),
+        "lock" => drift_lock(req),
+        "derive_pubkey" => drift_derive_pubkey(req),
+        "sign_evm" => drift_sign_evm(req),
+        "sign_solana" => drift_sign_solana(req),
+        "sign_bitcoin" => drift_sign_bitcoin(req),
+        "sign_cardano" => drift_sign_cardano(req),
+        other => err_json(format!("unknown method: {other}")),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // unit test: capabilities JSON parses + allowlists match lib.rs / derive.rs
 // ---------------------------------------------------------------------------
 
@@ -682,5 +711,31 @@ mod ffi_tests {
         unsafe { drift_free(out as *mut c_char) };
         let parsed: serde_json::Value = serde_json::from_str(&text).expect("validate json");
         assert_eq!(parsed.get("valid").and_then(|x| x.as_bool()), Some(true));
+    }
+
+    #[test]
+    fn drift_call_dispatches_and_reports_unknown_methods() {
+        fn call(method: &str, req: &str) -> String {
+            let m = CString::new(method).expect("cstring method");
+            let r = CString::new(req).expect("cstring req");
+            let out = drift_call(m.as_ptr(), r.as_ptr());
+            assert!(!out.is_null());
+            let text = unsafe { CStr::from_ptr(out).to_string_lossy().into_owned() };
+            unsafe { drift_free(out as *mut c_char) };
+            text
+        }
+
+        let v: serde_json::Value =
+            serde_json::from_str(&call("validate_mnemonic", r#"{"phrase":"abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"}"#))
+                .expect("dispatch json");
+        assert_eq!(v.get("valid").and_then(|x| x.as_bool()), Some(true));
+
+        let bad = call("sign_evm", r#"{"sessionId":999}"#);
+        let parsed: serde_json::Value = serde_json::from_str(&bad).expect("err json");
+        assert!(parsed.get("error").is_some(), "expected error envelope, got {bad}");
+
+        let unknown = call("no_such_method", "{}");
+        let parsed: serde_json::Value = serde_json::from_str(&unknown).expect("err json");
+        assert!(parsed.get("error").and_then(|x| x.as_str()).unwrap_or("").contains("unknown method"));
     }
 }

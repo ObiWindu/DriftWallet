@@ -8,6 +8,8 @@ import {
   buildSplNftTransfer,
   isSpamNft,
   NftAssetSchema,
+  NftCollectionFilter,
+  spamScore,
   type NftAsset,
 } from "./nfts.js";
 
@@ -86,5 +88,48 @@ describe("nfts", () => {
     expect(transfer.to).toBe(dest);
     expect(dish).toMatchObject({ program: "metaplex-token-metadata", instruction: "transfer", amount: "1" });
     expect(() => buildSplNftTransfer("not-base58!!", from, dest)).toThrow();
+  });
+});
+
+describe("NFT collection filter + spam scoring (iteration 3)", () => {
+  const good: NftAsset = {
+    standard: "erc721", chain: "eip155:1", contract: "0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D",
+    tokenId: "1", owner: "0xabc", name: "Bored Ape #1", collectionId: "bayc",
+  };
+  const airdrop: NftAsset = {
+    standard: "erc721", chain: "eip155:1", contract: "0x0000000000000000000000000000000000000001",
+    tokenId: "9", owner: "0xabc", name: "FREE AIRDROP CLAIM NOW",
+  };
+  const unknown: NftAsset = {
+    standard: "metaplex", chain: "solana:mainnet", contract: "metaplex", tokenId: "7", owner: "So1",
+  };
+
+  it("hides spam by default, reveals on demand, honors allow/blocklists", () => {
+    const f = new NftCollectionFilter({ allowlist: [], blocklist: ["bayc"] });
+    const res = f.filterAll([good, airdrop, unknown]);
+    // bayc blocklisted, airdrop spam, unknown unidentified -> all hidden
+    expect(res.visible).toEqual([]);
+    expect(res.hidden).toHaveLength(3);
+    expect(res.hidden[0]?.reasons).toContain("collection is blocklisted");
+    expect(res.hidden[1]?.reasons.some((r) => r.includes("suspicious name"))).toBe(true);
+
+    f.reveal("bayc");
+    const res2 = f.filterAll([good]);
+    expect(res2.visible).toHaveLength(1); // revealed despite blocklist
+
+    const allow = new NftCollectionFilter({ allowlist: ["bayc"], blocklist: [] });
+    expect(allow.isVisible(good).visible).toBe(true);
+    expect(allow.isVisible(airdrop).visible).toBe(false);
+  });
+
+  it("spamScore counts reasons; exportJSON round-trips lists", () => {
+    expect(spamScore(airdrop)).toBeGreaterThan(0);
+    expect(spamScore(good)).toBe(0);
+    const f = new NftCollectionFilter({ allowlist: ["a"], blocklist: ["b"] });
+    f.reveal("b");
+    const json = JSON.parse(f.exportJSON());
+    expect(json.allowlist).toEqual(["a"]);
+    expect(json.blocklist).toEqual(["b"]);
+    expect(json.revealed).toEqual(["b"]);
   });
 });

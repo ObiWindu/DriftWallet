@@ -78,6 +78,13 @@ android {
     compileSdk rootProject.ext.compileSdkVersion
 
     namespace "com.driftrn"
+
+    sourceSets {
+        // DriftSigner TurboModule sources (packages/signer/android), backed by
+        // libdrift_signer.so built from packages/signer/rust via cargo-ndk.
+        main.java.srcDirs += ["../../../../packages/signer/android"]
+    }
+
     defaultConfig {
         applicationId "com.driftrn"
         minSdkVersion rootProject.ext.minSdkVersion

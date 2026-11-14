@@ -98,7 +98,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # Enforcing gate: measured WCAG contrast pairs (fails below 4.5:1).
       - run: pnpm --filter ./packages/ui exec vitest run src/contrast.test.ts
-      # Informational: static token scan (warns when tokens file is absent).
+      # Enforcing static gate: parses the TS token palettes and exits 1 on any
+      # text/background pair below 4.5:1 (iteration 3: no vacuous pass).
       - run: node scripts/contrast-check.mjs
   consistency:
     # Release-consistency gate: versions locked across shells + committed

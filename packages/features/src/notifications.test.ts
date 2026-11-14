@@ -3,9 +3,12 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  buildRevokePayload,
   buildSubscribePayload,
   evaluateTicks,
   NotificationQueue,
+  RevokeList,
+  securityEvent,
   type AlertRule,
 } from "./notifications.js";
 
@@ -85,5 +88,33 @@ describe("notifications", () => {
     expect(q.list()).toEqual([]);
     // after eviction, an evicted id may be re-added (no unbounded growth)
     expect(q.push(n)).toBe(true);
+  });
+});
+
+describe("revoke list + security events (iteration 3)", () => {
+  it("RevokeList revoke/isRevoked/unrevoke + export/import", () => {
+    const rl = new RevokeList();
+    rl.revoke("https://dapp.example", 1000, "suspicious request");
+    expect(rl.isRevoked("https://dapp.example")).toBe(true);
+    expect(rl.isRevoked("https://other.example")).toBe(false);
+    expect(rl.isRevoked("not a url")).toBe(false);
+    const json = rl.exportJSON();
+    const rl2 = new RevokeList();
+    rl2.importJSON(json);
+    expect(rl2.list()[0]).toMatchObject({ origin: "https://dapp.example", revokedAt: 1000, reason: "suspicious request" });
+    expect(rl2.unrevoke("https://dapp.example")).toBe(true);
+    expect(rl2.isRevoked("https://dapp.example")).toBe(false);
+  });
+
+  it("securityEvent builds a bounded notification", () => {
+    const n = securityEvent({ title: "Phishing blocked", body: "evil.example tried to sign", origin: "https://evil.example", at: 5 });
+    expect(n).toMatchObject({ ruleId: "security", title: "Phishing blocked", at: 5 });
+    expect(n.id.startsWith("sec:5:")).toBe(true);
+  });
+
+  it("buildRevokePayload accepts only sha256 hex", () => {
+    expect(buildRevokePayload(HASH)).toEqual({ hashedAddrHex: HASH });
+    expect(() => buildRevokePayload("0xabc123")).toThrow();
+    expect(() => buildRevokePayload("ab".repeat(31))).toThrow();
   });
 });

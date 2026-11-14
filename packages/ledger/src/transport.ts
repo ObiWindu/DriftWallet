@@ -46,8 +46,10 @@ export function ledgerDerivationPath(chain: "evm" | "solana" | "bitcoin" | "card
 }
 
 // ---------------------------------------------------------------------------
-// Minimal local transport types (no @ledgerhq deps per task constraints).
-// All I/O validated with zod. No secrets are logged.
+// Transport abstraction. Real device adapters over @ledgerhq/hw-transport
+// live in ./real-transport.ts; this file holds the schemas, the validating
+// registry, and the in-memory mock used by tests/UI. All I/O validated with
+// zod. No secrets are logged.
 // ---------------------------------------------------------------------------
 
 export const TransportKind = z.enum(["hid", "ble", "usb", "mock"]);

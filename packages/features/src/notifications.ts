@@ -188,3 +188,91 @@ export class NotificationQueue {
     return this.items.length;
   }
 }
+
+// ---------------------------------------------------------------- iteration 3
+
+/**
+ * Per-origin revoke records (F-P2-5): one-tap revoke UX state. The actual
+ * network revoke goes through the gateway with a sha256-hashed address only.
+ */
+export const RevokeRecordSchema = z.object({
+  origin: z.string().url(),
+  revokedAt: z.number().int().nonnegative(),
+  reason: z.string().max(200).optional(),
+});
+export type RevokeRecord = z.infer<typeof RevokeRecordSchema>;
+
+export const RevokeListExportSchema = z.object({
+  version: z.literal(1),
+  revoked: z.array(RevokeRecordSchema),
+});
+
+export class RevokeList {
+  private items = new Map<string, RevokeRecord>();
+
+  revoke(origin: string, nowMs?: number, reason?: string): RevokeRecord {
+    const o = z.string().url().parse(origin);
+    const now = nowMs ?? Date.now();
+    z.number().int().nonnegative().parse(now);
+    const rec = RevokeRecordSchema.parse({ origin: o, revokedAt: now, reason: reason?.slice(0, 200) });
+    this.items.set(o, rec);
+    return rec;
+  }
+
+  isRevoked(origin: string): boolean {
+    try {
+      return this.items.has(z.string().url().parse(origin));
+    } catch {
+      return false;
+    }
+  }
+
+  unrevoke(origin: string): boolean {
+    try {
+      return this.items.delete(z.string().url().parse(origin));
+    } catch {
+      return false;
+    }
+  }
+
+  list(): RevokeRecord[] {
+    return [...this.items.values()];
+  }
+
+  exportJSON(): string {
+    return JSON.stringify(RevokeListExportSchema.parse({ version: 1, revoked: this.list() }));
+  }
+
+  importJSON(json: string): RevokeRecord[] {
+    const parsed = RevokeListExportSchema.parse(JSON.parse(json) as unknown);
+    this.items.clear();
+    for (const r of parsed.revoked) this.items.set(r.origin, r);
+    return this.list();
+  }
+}
+
+/** Build a security-event notification (phishing block, new origin, sim mismatch...). */
+export function securityEvent(input: {
+  title: string;
+  body: string;
+  origin?: string;
+  ruleId?: string;
+  at?: number;
+}): Notification {
+  const now = input.at ?? Date.now();
+  return NotificationSchema.parse({
+    id: `sec:${now}:${input.title.slice(0, 24)}`,
+    ruleId: input.ruleId ?? "security",
+    title: input.title.slice(0, 120),
+    body: input.body.slice(0, 240),
+    at: now,
+  });
+}
+
+/** Push-revoke payload: sha256-hex only, raw addresses rejected. */
+export function buildRevokePayload(hashedAddrHex: string): { hashedAddrHex: string } {
+  if (!RE_SHA256_HEX.test(hashedAddrHex)) {
+    throw new Error("hashedAddrHex must be sha256 hex (raw addresses are rejected)");
+  }
+  return { hashedAddrHex: hashedAddrHex.toLowerCase() };
+}

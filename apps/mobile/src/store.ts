@@ -6,21 +6,27 @@
 // NO key material, only opaque sessionId + UI selection.
 import { createStore } from "zustand/vanilla";
 
-export const BIOMETRIC_THRESHOLD_USD = 100;
 export const DEFAULT_AUTO_LOCK_MS = 5 * 60 * 1000;
 
 export type LockState =
   | { status: "locked" }
-  | { status: "unlocked"; sessionId: number };
+  | { status: "unlocked"; sessionId: number; /** True when unlocked with the duress PIN (decoy vault). */
+    duress?: boolean };
 
 export interface WalletUiState {
   lock: LockState;
   selectedChain: string;
   autoLockMs: number;
-  unlock: (sessionId: number) => void;
+  /** Iteration 3: watch-only accounts cannot sign (banner on every screen). */
+  watchOnly: boolean;
+  /** Iteration 3: per-session spending limit in USD cents ("0" = unlimited). */
+  spendLimitUsdCents: string;
+  unlock: (sessionId: number, opts?: { duress?: boolean }) => void;
   lockWallet: () => void;
   selectChain: (chainId: string) => void;
   setAutoLockMs: (ms: number) => void;
+  setWatchOnly: (v: boolean) => void;
+  setSpendLimitUsdCents: (cents: string) => void;
 }
 
 const ALLOWED_CHAINS = new Set([
@@ -35,9 +41,11 @@ export function createWalletStore() {
     lock: { status: "locked" },
     selectedChain: "eip155:1",
     autoLockMs: DEFAULT_AUTO_LOCK_MS,
-    unlock: (sessionId: number) => {
+    watchOnly: false,
+    spendLimitUsdCents: "0",
+    unlock: (sessionId: number, opts?: { duress?: boolean }) => {
       if (!Number.isInteger(sessionId) || sessionId <= 0) throw new Error("bad session id");
-      set({ lock: { status: "unlocked", sessionId } });
+      set({ lock: { status: "unlocked", sessionId, ...(opts?.duress ? { duress: true } : {}) } });
     },
     lockWallet: () => set({ lock: { status: "locked" } }),
     selectChain: (chainId: string) => {
@@ -49,6 +57,11 @@ export function createWalletStore() {
         throw new Error("auto-lock must be 30s–30min");
       }
       set({ autoLockMs: ms });
+    },
+    setWatchOnly: (v: boolean) => set({ watchOnly: Boolean(v) }),
+    setSpendLimitUsdCents: (cents: string) => {
+      if (!/^\d+$/.test(cents)) throw new Error("spend limit must be integer cents");
+      set({ spendLimitUsdCents: cents });
     },
   }));
 }

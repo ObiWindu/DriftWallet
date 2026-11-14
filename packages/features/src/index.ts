@@ -7,3 +7,6 @@ export * from "./staking.js";
 export * from "./nfts.js";
 export * from "./accounts.js";
 export * from "./notifications.js";
+export * from "./portfolio.js";
+export * from "./price-alerts.js";
+export * from "./send-flow.js";

@@ -50,15 +50,31 @@ export const SettingsModel = z.object({
   biometrics: z.boolean(),
   testnet: z.boolean(),
   spamHide: z.boolean().default(true),
+  /** Iteration 3: per-session spending limit in USD cents ("0" = unlimited). */
+  spendLimitUsdCents: z.string().regex(/^\d+$/).default("0"),
+  /** Iteration 3: watch-only account flag — sign CTAs must be disabled. */
+  watchOnly: z.boolean().default(false),
 });
 export type SettingsModel = z.infer<typeof SettingsModel>;
 
 export function defaultSettings(): SettingsModel {
-  return SettingsModel.parse({ autoLockSecs: 300, biometrics: false, testnet: true, spamHide: true });
+  return SettingsModel.parse({ autoLockSecs: 300, biometrics: false, testnet: true, spamHide: true, spendLimitUsdCents: "0", watchOnly: false });
 }
 
 export function updateSettings(current: SettingsModel, patch: Partial<SettingsModel>): SettingsModel {
   return SettingsModel.parse({ ...SettingsModel.parse(current), ...patch });
+}
+
+/**
+ * Iteration 3 (F-P1-10): mechanical watch-only enforcement. Every screen model
+ * must call this; when watch-only, `canSign` is false and the banner text is
+ * always set so the UI renders it.
+ */
+export function watchOnlyGuard(settings: SettingsModel): { watchOnly: boolean; canSign: boolean; banner: string | null } {
+  const s = SettingsModel.parse(settings);
+  return s.watchOnly
+    ? { watchOnly: true, canSign: false, banner: "Watch-only account — signing is disabled. Import the private key to enable sends." }
+    : { watchOnly: false, canSign: true, banner: null };
 }
 
 export interface FullPageModel {

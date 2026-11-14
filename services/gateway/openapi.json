@@ -2,82 +2,142 @@
   "openapi": "3.0.0",
   "info": {
     "title": "drift-gateway",
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "paths": {
     "/healthz": {
       "get": {
-        "summary": "health"
+        "summary": "health + upstream status"
       }
     },
     "/v1/prices": {
       "get": {
-        "summary": "prices"
+        "summary": "current fiat prices (USD) per asset"
       }
     },
-    "/v1/evm/{chainId}/broadcast": {
-      "post": {
-        "summary": "broadcast evm"
-      }
-    },
-    "/v1/sol/broadcast": {
-      "post": {
-        "summary": "broadcast sol"
-      }
-    },
-    "/v1/btc/broadcast": {
-      "post": {
-        "summary": "broadcast btc"
-      }
-    },
-    "/v1/ada/broadcast": {
-      "post": {
-        "summary": "broadcast ada"
+    "/v1/prices/history": {
+      "get": {
+        "summary": "price history series for sparklines"
       }
     },
     "/v1/phishlist": {
       "get": {
-        "summary": "phishlist"
+        "summary": "phishing domain list"
       }
     },
     "/v1/push/subscribe": {
       "post": {
-        "summary": "push subscribe"
+        "summary": "subscribe push for hashed address"
+      }
+    },
+    "/v1/push/revoke": {
+      "post": {
+        "summary": "revoke push for hashed address"
+      }
+    },
+    "/v1/push/unsubscribe": {
+      "post": {
+        "summary": "unsubscribe push for hashed address"
+      }
+    },
+    "/v1/evm/{chainId}/broadcast": {
+      "post": {
+        "summary": "broadcast raw EVM tx"
+      }
+    },
+    "/v1/sol/broadcast": {
+      "post": {
+        "summary": "broadcast signed Solana tx"
+      }
+    },
+    "/v1/btc/broadcast": {
+      "post": {
+        "summary": "broadcast raw BTC tx via Esplora"
+      }
+    },
+    "/v1/ada/broadcast": {
+      "post": {
+        "summary": "submit signed Cardano tx via Koios"
       }
     },
     "/v1/evm/{chainId}/balance/{addr}": {
       "get": {
-        "summary": "evm balance"
+        "summary": "EVM native balance (wei)"
       }
     },
     "/v1/sol/balance/{addr}": {
       "get": {
-        "summary": "sol balance"
+        "summary": "Solana native balance (lamports)"
       }
     },
     "/v1/btc/utxo/{addr}": {
       "get": {
-        "summary": "btc utxos"
+        "summary": "BTC UTXO set via Esplora"
       }
     },
     "/v1/ada/utxo/{addr}": {
       "get": {
-        "summary": "ada utxos"
+        "summary": "Cardano address info via Koios"
       }
     },
     "/v1/tokens/{chain}": {
       "get": {
-        "summary": "tokens"
+        "summary": "token metadata list for chain"
       }
     },
     "/v1/evm/simulate": {
       "post": {
-        "summary": "simulate evm"
+        "summary": "simulate EVM call, return balance diff"
       }
     },
     "/v1/sol/simulate": {
       "post": {
-        "summary": "simulate sol"
+        "summary": "simulate Solana tx, return balance diff"
+      }
+    },
+    "/v1/evm/{chainId}/rpc": {
+      "post": {
+        "summary": "allowlisted read-only JSON-RPC passthrough"
+      }
+    },
+    "/v1/evm/{chainId}/fee-estimate": {
+      "get": {
+        "summary": "gas limit + low/med/high fee tiers"
+      }
+    },
+    "/v1/evm/{chainId}/tokens/{addr}": {
+      "get": {
+        "summary": "ERC-20 balances for address"
+      }
+    },
+    "/v1/evm/{chainId}/tx/{hash}": {
+      "get": {
+        "summary": "EVM tx receipt status"
+      }
+    },
+    "/v1/sol/tokens/{addr}": {
+      "get": {
+        "summary": "SPL token balances for owner"
+      }
+    },
+    "/v1/sol/tx/{sig}": {
+      "get": {
+        "summary": "Solana signature status"
+      }
+    },
+    "/v1/swap/quote": {
+      "post": {
+        "summary": "aggregator quote (0x EVM / Jupiter SOL), unsigned"
+      }
+    },
+    "/v1/nfts/{chain}/{addr}": {
+      "get": {
+        "summary": "NFT holdings via configured indexer"
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "summary": "this document"
       }
     }
   }

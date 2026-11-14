@@ -69,11 +69,14 @@ export interface WcTransport {
   onMessage(cb: (topic: string, payload: unknown) => void): () => void;
 }
 
-/** Queue a pairing proposal. Duplicate ids rejected. */
-export function proposeSession(store: WcStore, raw: unknown): WcStore {
+/** Queue a pairing proposal. Duplicate ids rejected. Iteration 3: an optional phishing guard can block known-bad proposer URLs. */
+export function proposeSession(store: WcStore, raw: unknown, opts?: { isPhish?: (url: string) => boolean }): WcStore {
   const proposal = WcProposal.parse(raw);
   if (store.proposals.some((p) => p.id === proposal.id)) {
     throw new Error(`duplicate wc proposal id: ${proposal.id}`);
+  }
+  if (opts?.isPhish && opts.isPhish(proposal.proposer.url)) {
+    throw new Error(`blocked pairing from phishing proposer: ${proposal.proposer.url}`);
   }
   return { ...store, proposals: [...store.proposals, proposal] };
 }
@@ -180,4 +183,31 @@ export function pendingRequests(store: WcStore, topic: string): WcSessionRequest
 export function isSessionExpired(session: WcSession, nowMs: number): boolean {
   const s = WcSession.parse(session);
   return z.number().int().nonnegative().parse(nowMs) >= s.expiry;
+}
+
+/** Iteration 3: bulk-prune expired sessions (call on SW wake + alarm). */
+export function expireSessions(store: WcStore, nowMs: number): WcStore {
+  z.number().int().nonnegative().parse(nowMs);
+  const sessions: Record<string, WcSession> = {};
+  for (const [topic, s] of Object.entries(store.sessions)) {
+    if (!isSessionExpired(s, nowMs)) sessions[topic] = s;
+  }
+  const requests: Record<string, WcSessionRequest[]> = {};
+  for (const [topic, list] of Object.entries(store.requests)) {
+    if (sessions[topic]) requests[topic] = list;
+  }
+  return { ...store, sessions, requests };
+}
+
+/** Iteration 3: drop proposals past their expiry (relay proposals time out). */
+export function pruneExpiredProposals(store: WcStore, nowMs: number): WcStore {
+  z.number().int().nonnegative().parse(nowMs);
+  return { ...store, proposals: store.proposals.filter((p) => p.expiry > nowMs) };
+}
+
+/** Iteration 3: session_request for a chain the session does not cover is rejected up front. */
+export function sessionCoversChain(session: WcSession, chainId: string): boolean {
+  const s = WcSession.parse(session);
+  const c = z.string().min(1).parse(chainId);
+  return Object.values(s.namespaces).some((ns) => ns.chains.includes(c));
 }

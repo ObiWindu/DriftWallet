@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export * from "./transport.js";
+export * from "./real-transport.js";
 export * from "./pairing.js";
 export * from "./policy.js";
 export * from "./evm.js";

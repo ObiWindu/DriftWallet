@@ -10,10 +10,10 @@ import {
   type SignerIface,
 } from "./index.js";
 
-// NOTE: session handles are opaque numbers kept ONLY in memory (closure
-// scope / in-Rust session table). NEVER persist sessions, mnemonics, or
-// passwords to localStorage/sessionStorage/IndexedDB — the extension
-// offscreen document holds the WASM instance ephemerally and drops it on lock.
+// NOTE: session handles are opaque numbers kept ONLY in WASM linear memory
+// (Rust session table). NEVER persist sessions, mnemonics, or passwords to
+// localStorage/sessionStorage/IndexedDB — the extension offscreen document
+// holds the WASM instance ephemerally and drops it on lock.
 
 const StrengthSchema = z.union([z.literal(128), z.literal(256)]);
 const PathSchema = z
@@ -35,64 +35,122 @@ const VaultSchema = z.object({
   argon2: z.object({ mKib: z.number(), tCost: z.number(), pCost: z.number() }),
 });
 
-/** Expected shape of the wasm-pack generated glue (`wasm-pkg/drift_signer.js`). */
+/**
+ * Shape of the wasm-pack generated glue (`wasm-pkg/drift_signer.js`).
+ * Every export takes ONE JSON-string request and returns a JSON-string
+ * response (`{...}` or `{"error":"..."}`) — the same contract as the UniFFI
+ * FFI in `packages/signer/rust/src/ffi.rs`. `default` is wasm-bindgen's
+ * `__wbg_init` and must run once before any call.
+ */
 interface WasmPkg {
-  generate_mnemonic(strength_bits: number): string;
-  validate_mnemonic(phrase: string): boolean;
-  entropy_to_vault(phrase: string, password: string, light_kdf: boolean): string;
-  unlock_vault(vault_json: string, password: string): number;
-  lock(session_id: number): void;
-  derive_pubkey(session_id: number, path: string, curve: string): string;
-  sign_evm(session_id: number, req_json: string): string;
-  sign_solana(session_id: number, req_json: string): string;
-  sign_bitcoin(session_id: number, req_json: string): string;
-  sign_cardano(session_id: number, req_json: string): string;
+  default?(input?: unknown): Promise<unknown>;
+  capabilities(): string;
+  generate_mnemonic(req: string): string;
+  validate_mnemonic(req: string): string;
+  entropy_to_vault(req: string): string;
+  unlock_vault(req: string): string;
+  lock_session(req: string): string;
+  derive_pubkey(req: string): string;
+  sign_evm(req: string): string;
+  sign_solana(req: string): string;
+  sign_bitcoin(req: string): string;
+  sign_cardano(req: string): string;
 }
 
-function pick<T>(parsed: unknown, camel: string, snake: string): T {
-  const o = parsed as Record<string, T | undefined>;
-  const v = o[camel] ?? o[snake];
-  if (v === undefined) throw new Error(`wasm response missing field: ${camel}`);
-  return v;
+const REQUIRED_FNS = [
+  "generate_mnemonic",
+  "validate_mnemonic",
+  "entropy_to_vault",
+  "unlock_vault",
+  "lock_session",
+  "derive_pubkey",
+  "sign_evm",
+  "sign_solana",
+  "sign_bitcoin",
+  "sign_cardano",
+] as const;
+
+function missingPkgError(cause: unknown): Error {
+  return new Error(
+    "Drift WASM signer package missing at ../wasm-pkg/drift_signer.js. " +
+      "Build it with wasm-pack (see packages/signer/ts/wasm.README.md), then record " +
+      "its SHA256 in packages/signer/ts/wasm.SHA256. " +
+      `Underlying: ${cause instanceof Error ? cause.message : String(cause)}`,
+  );
+}
+
+function isNode(): boolean {
+  return (
+    typeof process !== "undefined" &&
+    typeof process.versions === "object" &&
+    process.versions !== null &&
+    typeof process.versions.node === "string"
+  );
+}
+
+/** Instantiate the wasm module once: bytes from disk in Node, fetch() in the browser. */
+async function initWasm(pkg: WasmPkg): Promise<void> {
+  if (typeof pkg.default !== "function") return;
+  if (isNode()) {
+    // Variable specifiers + @vite-ignore keep node builtins out of browser bundles.
+    const fsName = "node:fs";
+    const urlName = "node:url";
+    const fs = (await import(/* @vite-ignore */ fsName)) as typeof import("node:fs");
+    const { fileURLToPath } = (await import(/* @vite-ignore */ urlName)) as typeof import("node:url");
+    const wasmUrl = new URL("../wasm-pkg/drift_signer_bg.wasm", import.meta.url);
+    await pkg.default(fs.readFileSync(fileURLToPath(wasmUrl)));
+  } else {
+    await pkg.default();
+  }
 }
 
 async function importWasmPkg(): Promise<WasmPkg> {
   // Non-literal specifier so `tsc` doesn't require the generated file to exist.
   const specifier: string = "../wasm-pkg/drift_signer.js";
+  let mod: Record<string, unknown>;
   try {
-    const mod = (await import(/* @vite-ignore */ specifier)) as Partial<WasmPkg> & {
-      default?: unknown;
-    };
-    const pkg = (mod.default ?? mod) as Partial<WasmPkg>;
-    for (const fn of [
-      "generate_mnemonic",
-      "entropy_to_vault",
-      "unlock_vault",
-      "lock",
-      "derive_pubkey",
-      "sign_evm",
-      "sign_solana",
-      "sign_bitcoin",
-      "sign_cardano",
-    ] as const) {
-      if (typeof pkg[fn] !== "function") {
-        throw new Error(`wasm-pkg export missing: ${fn}`);
-      }
-    }
-    return pkg as WasmPkg;
+    mod = (await import(/* @vite-ignore */ specifier)) as Record<string, unknown>;
   } catch (err) {
-    throw new Error(
-      "Drift WASM signer package missing at ../wasm-pkg/drift_signer.js. " +
-        "Build it with wasm-pack (see packages/signer/ts/wasm.README.md), then record " +
-        "its SHA256 in packages/signer/ts/wasm.SHA256. " +
-        `Underlying: ${(err as Error).message}`,
-    );
+    throw missingPkgError(err);
   }
+  const pkg = mod as unknown as Partial<WasmPkg>;
+  for (const fn of REQUIRED_FNS) {
+    if (typeof pkg[fn] !== "function") {
+      throw missingPkgError(`wasm-pkg export missing: ${fn}`);
+    }
+  }
+  const full = pkg as WasmPkg;
+  await initWasm(full);
+  return full;
+}
+
+/** Call a glue export; unwrap the `{"error":"..."}` envelope into a throw. */
+function call<K extends (typeof REQUIRED_FNS)[number]>(
+  pkg: WasmPkg,
+  fn: K,
+  req: unknown,
+): Record<string, unknown> {
+  const raw = pkg[fn](JSON.stringify(req));
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`signer ${fn}: non-JSON response`);
+  }
+  const p = parsed as Record<string, unknown>;
+  if (typeof p.error === "string") throw new Error(`signer ${fn}: ${p.error}`);
+  return p;
+}
+
+function pick<T>(parsed: Record<string, unknown>, camel: string, snake: string): T {
+  const v = parsed[camel] ?? parsed[snake];
+  if (v === undefined) throw new Error(`wasm response missing field: ${camel}`);
+  return v as T;
 }
 
 /**
  * Load the WASM signer for the extension offscreen document.
- * Maps wasm-pack JSON-string exports onto {@link SignerIface} with zod
+ * Maps the wasm-bindgen JSON-string exports onto {@link SignerIface} with zod
  * validation of every input (paths/chains re-checked; Rust re-validates).
  */
 export async function loadWasmSigner(): Promise<SignerIface> {
@@ -101,34 +159,36 @@ export async function loadWasmSigner(): Promise<SignerIface> {
   return {
     async generateMnemonic(strengthBits) {
       StrengthSchema.parse(strengthBits);
-      return wasm.generate_mnemonic(strengthBits);
+      const p = call(wasm, "generate_mnemonic", { strengthBits });
+      return z.string().min(1).parse(pick<string>(p, "mnemonic", "mnemonic"));
     },
     async validateMnemonic(phrase) {
       z.string().min(1).parse(phrase);
-      return wasm.validate_mnemonic(phrase);
+      const p = call(wasm, "validate_mnemonic", { phrase });
+      return z.boolean().parse(pick<boolean>(p, "valid", "valid"));
     },
     async entropyToVault(phrase, password, lightKdf) {
       z.string().min(1).parse(phrase);
       z.string().min(1).parse(password);
-      const raw = wasm.entropy_to_vault(phrase, password, lightKdf === true);
-      return VaultSchema.parse(JSON.parse(raw));
+      const p = call(wasm, "entropy_to_vault", { phrase, password, lightKdf: lightKdf === true });
+      return VaultSchema.parse(p);
     },
     async unlockVault(vault, password) {
       VaultSchema.parse(vault);
       z.string().min(1).parse(password);
-      const id = wasm.unlock_vault(JSON.stringify(vault), password);
-      return SessionId.parse(id);
+      const p = call(wasm, "unlock_vault", { vault, password });
+      return SessionId.parse(pick<number>(p, "sessionId", "session_id"));
     },
     async lock(sessionId) {
       SessionId.parse(sessionId);
-      wasm.lock(sessionId);
+      const p = call(wasm, "lock_session", { sessionId });
+      if (pick<boolean>(p, "locked", "locked") !== true) throw new Error("signer lock_session: not locked");
     },
     async derivePubkey(sessionId, path, curve) {
       SessionId.parse(sessionId);
       PathSchema.parse(path);
       CurveSchema.parse(curve);
-      const raw = wasm.derive_pubkey(sessionId, path, curve);
-      const p = JSON.parse(raw) as Record<string, string>;
+      const p = call(wasm, "derive_pubkey", { sessionId, path, curve });
       return {
         publicKeyHex: HexSchema.parse(pick<string>(p, "publicKeyHex", "public_key_hex")),
         address: z.string().min(1).parse(p.address),
@@ -138,8 +198,7 @@ export async function loadWasmSigner(): Promise<SignerIface> {
       SessionId.parse(sessionId);
       PathSchema.parse(req.path);
       ChainSchema.parse(req.chainId);
-      const raw = wasm.sign_evm(sessionId, JSON.stringify(req));
-      const p = JSON.parse(raw) as Record<string, string>;
+      const p = call(wasm, "sign_evm", { sessionId, ...req });
       return {
         rawTxHex: HexSchema.parse(pick<string>(p, "rawTxHex", "raw_tx_hex")),
         txHashHex: HexSchema.parse(pick<string>(p, "txHashHex", "tx_hash_hex")),
@@ -148,8 +207,8 @@ export async function loadWasmSigner(): Promise<SignerIface> {
     async signSolana(sessionId, req) {
       SessionId.parse(sessionId);
       PathSchema.parse(req.path);
-      const raw = wasm.sign_solana(sessionId, JSON.stringify(req));
-      const p = JSON.parse(raw) as Record<string, string>;
+      HexSchema.parse(req.messageBytesHex);
+      const p = call(wasm, "sign_solana", { sessionId, messageBytesHex: req.messageBytesHex, path: req.path });
       return {
         signatureBase58: z.string().min(1).parse(pick<string>(p, "signatureBase58", "signature_base58")),
         publicKeyBase58: z.string().min(1).parse(pick<string>(p, "publicKeyBase58", "public_key_base58")),
@@ -158,10 +217,7 @@ export async function loadWasmSigner(): Promise<SignerIface> {
     async signBitcoin(sessionId, req) {
       SessionId.parse(sessionId);
       z.array(z.object({ sighashHex: HexSchema, path: PathSchema })).parse(req.inputs);
-      const raw = wasm.sign_bitcoin(sessionId, JSON.stringify(req));
-      const p = JSON.parse(raw) as {
-        signatures?: { publicKeyHex?: string; derSigHex?: string; public_key_hex?: string; der_sig_hex?: string }[];
-      };
+      const p = call(wasm, "sign_bitcoin", { sessionId, ...req });
       const sigs = z.array(z.object({}).passthrough()).parse(p.signatures ?? []);
       return {
         signatures: sigs.map((s) => {
@@ -176,8 +232,7 @@ export async function loadWasmSigner(): Promise<SignerIface> {
     async signCardano(sessionId, req) {
       SessionId.parse(sessionId);
       z.array(PathSchema).parse(req.witnessPaths);
-      const raw = wasm.sign_cardano(sessionId, JSON.stringify(req));
-      const p = JSON.parse(raw) as Record<string, unknown>;
+      const p = call(wasm, "sign_cardano", { sessionId, ...req });
       const witnesses = z.array(z.object({}).passthrough()).parse(p.witnesses ?? []);
       return {
         witnesses: witnesses.map((w) => {
